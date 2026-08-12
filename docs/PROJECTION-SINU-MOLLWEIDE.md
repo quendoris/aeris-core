@@ -450,6 +450,197 @@ The sum must equal the unsplit source feature's ellipsoidal area within toleranc
 
 This specifically tests seam clipping, not merely the component projections.
 
+### 15.4 Source-edge semantics
+
+A mathematically equal-area point transform is not sufficient to guarantee an equal-area rendered polygon. A source edge is a continuous geographic curve, while SVG, PDF, rasterizers, and most planar polygon-area routines ultimately operate on finite line segments.
+
+AERIS therefore MUST define the meaning of every canonical source edge before projection.
+
+The ingestion layer MUST preserve or explicitly normalize the edge semantics declared by the source format or dataset. It MUST NOT silently reinterpret a source curve merely because a downstream renderer only understands straight segments.
+
+The target canonical AERIS geometry model is:
+
+```text
+canonical vertex sequence
+        +
+explicit edge model
+        +
+source precision / normalization provenance
+```
+
+For the initial stable format, AERIS SHOULD normalize ordinary polygon boundaries to a deterministic sequence of WGS84 vertices whose consecutive vertices are connected by the canonical AERIS edge model. If a source uses different interpolation semantics, ingestion MUST approximate that source curve to a documented geographic error bound before it becomes canonical AERIS geometry.
+
+The exact initial canonical edge model is a **freeze-blocking decision**. AERIS MUST NOT accidentally inherit edge semantics from whichever geometry library happens to be used during development.
+
+Candidate models include shortest WGS84 geodesic segments between canonical vertices or an explicitly defined source-coordinate interpolation model. The stable choice must be documented together with its area algorithm and import-normalization rules.
+
+### 15.5 Projection of an edge is a curve
+
+Let a canonical geographic edge be parameterized by `g(t)`, with:
+
+```text
+0 <= t <= 1
+```
+
+and let the full AERIS forward projection be `P`.
+
+The exact projected edge is the planar curve:
+
+```text
+c(t) = P(g(t))
+```
+
+In general:
+
+```text
+c(t) != (1 - t) P(g(0)) + t P(g(1))
+```
+
+Therefore AERIS MUST NOT project only the two edge endpoints and connect them with one planar straight segment unless that segment has independently satisfied the subdivision error contract.
+
+This rule applies equally to:
+
+- country boundaries;
+- coastlines;
+- holes;
+- graticules;
+- disputed boundaries;
+- clipping-generated edges where the source-space edge remains curved after projection.
+
+### 15.6 Deterministic adaptive subdivision
+
+AERIS MUST provide one deterministic CPU reference algorithm for approximating `c(t)` with a planar polyline.
+
+Subdivision is evaluated in the canonical source-edge parameter domain, not by repeatedly interpolating already projected coordinates.
+
+For an interval `[t0, t1]`, a reference refinement step SHOULD evaluate at least:
+
+```text
+t0
+(t0 + t1) / 2
+t1
+```
+
+and the stable implementation SHOULD use a stronger nested sample such as quarter points when required to avoid accepting an S-shaped or otherwise poorly sampled projected curve.
+
+A practical reference set is:
+
+```text
+t0
+0.75 t0 + 0.25 t1
+0.50 t0 + 0.50 t1
+0.25 t0 + 0.75 t1
+t1
+```
+
+Each sample is produced by evaluating the canonical geographic edge first and only then applying the complete projection pipeline.
+
+Subdivision MUST occur before a renderer receives the final path. SVG, PDF, PNG, JPEG, and the interactive view MUST share the same minimum projection-geometry contract rather than inventing unrelated approximation rules.
+
+### 15.7 Acceptance criteria for a projected edge interval
+
+An interval may be accepted as a finite planar polyline approximation only if all applicable criteria pass.
+
+The stable contract MUST include at least the following classes of criteria:
+
+**Geometric deviation**
+
+For projected interior samples, measure their distance from the coarse endpoint chord or from the refined reference polyline. Let the maximum measured deviation be `δ_geom`.
+
+The interval must satisfy:
+
+```text
+δ_geom <= τ_geom
+```
+
+where `τ_geom` is expressed in stable projected units, not screen pixels.
+
+**Local area defect**
+
+The area enclosed between the coarse chord and the refined projected polyline provides a direct estimate of the area lost or gained by flattening the curve. Let its absolute magnitude be `δ_area`.
+
+The interval must satisfy its allocated area-error budget.
+
+**Topological safety**
+
+An interval MUST NOT be accepted merely because its geometric deviation is small if it crosses or may cross:
+
+- a projection-region boundary;
+- an interruption seam;
+- an antimeridian normalization boundary relevant to its canonical representation;
+- a singular or explicitly special projection domain.
+
+Such intervals must first be split at the mathematically defined boundary or handled by the boundary-specific algorithm.
+
+**Maximum source span**
+
+The stable contract MAY impose a maximum unsplit source-edge span as a guard against midpoint aliasing or pathological sparse inputs. Such a guard is supplementary; it must not replace the geometric and area criteria.
+
+### 15.8 Feature-level area-error budget
+
+Subdivision tolerance MUST be tied to the actual area-preservation guarantee rather than chosen only for visual smoothness.
+
+For a source feature with ellipsoidal reference area `A_e`, define a permitted polygon-discretization budget conceptually as:
+
+```text
+E_feature = max(E_abs, E_rel * |A_e|)
+```
+
+where `E_abs` protects tiny features and `E_rel` bounds ordinary relative error.
+
+The stable contract MUST specify how this budget is distributed and accumulated across:
+
+- rings;
+- edges;
+- recursively subdivided intervals;
+- seam-generated pieces.
+
+A simple implementation may begin with conservative per-edge budgets, but a production implementation MUST measure the aggregate discretization contribution and MUST NOT assume that independently acceptable edges automatically imply an acceptable whole polygon.
+
+The projection, clipping, subdivision, and final planar-area errors must fit inside one published error budget. They are not separate excuses that may each consume the full advertised tolerance.
+
+### 15.9 Renderer-independent canonical minimum
+
+The projection stage produces a **canonical minimum planar approximation** that satisfies the projection contract.
+
+A renderer MAY further subdivide that geometry for antialiasing or device-specific quality, but it MUST NOT coarsen it below the canonical minimum unless an explicit lower-fidelity export mode says that it is doing so.
+
+The ordinary and maximum-quality SVG/PDF export paths MUST preserve the canonical projection geometry or a mathematically equivalent representation.
+
+A raster export may sample the canonical geometry at any output resolution, but changing raster resolution MUST NOT change the underlying projected feature area definition.
+
+### 15.10 Simplification is not free
+
+Post-projection simplification can change polygon area and topology.
+
+Therefore simplification MUST NOT be applied to canonical or maximum-quality output merely as an implementation convenience.
+
+If AERIS later offers an explicit simplified/export-optimized mode, the simplifier must have its own deterministic contract covering:
+
+- maximum geometric deviation;
+- area error;
+- topology preservation;
+- seam preservation;
+- hole preservation;
+- deterministic output.
+
+Such output must be identified as simplified. It must never be used as the reference geometry for area verification.
+
+### 15.11 Subdivision convergence and hard limits
+
+Adaptive subdivision MUST terminate deterministically.
+
+The implementation MUST define:
+
+- a maximum recursion depth or equivalent iterative segment count limit;
+- a minimum source-parameter interval;
+- floating-point stagnation detection;
+- explicit failure behavior when the requested tolerance cannot be achieved.
+
+Reaching a safety limit is an error for a strict/maximum-quality path. AERIS MUST NOT silently emit an under-resolved edge and call the export successful.
+
+For intentionally lower-quality preview modes, any relaxed approximation contract must be explicit and must not alter canonical project geometry.
+
 ---
 
 ## 16. Draft numerical targets
@@ -460,6 +651,7 @@ The following are **engineering targets, not frozen guarantees**:
 - component inverse/forward round trips should target angular error on the order of `1e-12 rad` where numerically well-conditioned;
 - analytic or smoothly generated polygons away from seams should target relative area error no worse than `1e-10`;
 - real-world clipped polygons should target relative area error no worse than `1e-8`, with tighter bounds pursued where geometry precision permits;
+- polygon-discretization error from adaptive subdivision must fit inside the same published feature-level area budget rather than being ignored as a renderer detail;
 - no production feature may pass merely because its error is visually unnoticeable.
 
 Before 1.0, these thresholds MUST be justified empirically on representative geometry and tightened or reformulated if they mask implementation defects.
@@ -483,6 +675,10 @@ The reference implementation and tests MUST explicitly cover:
 - nearly collinear seam intersections;
 - duplicate adjacent vertices;
 - zero-area rings;
+- sparse source edges whose projected midpoint is misleading;
+- strongly curved projected edges;
+- edge subdivision immediately adjacent to seams;
+- subdivision at floating-point stagnation limits;
 - NaN and Infinity;
 - longitudes outside the accepted canonical input range;
 - floating-point values one ULP outside trigonometric function domains.
@@ -496,15 +692,17 @@ Silent repair at the mathematical projection layer is prohibited.
 Given identical:
 
 - canonical WGS84 coordinates;
+- canonical edge semantics;
 - projection contract version;
 - orientation matrix;
 - region definitions;
 - seam ownership rule;
+- subdivision contract and tolerances;
 - floating-point implementation contract;
 
 AERIS MUST produce deterministic region selection and equivalent projected coordinates within the published tolerance.
 
-Parallelism MUST NOT change topology, seam ownership, ring ordering semantics, or area results.
+Parallelism MUST NOT change topology, seam ownership, subdivision decisions, ring ordering semantics, or area results.
 
 ---
 
@@ -546,13 +744,18 @@ projection/
     inverse-points.json
     seam-points.json
     tissot-grid.json
+    edge-semantics.json
+    subdivision-reference.json
     polygons-simple.geojson
     polygons-seams.geojson
     polygons-polar.geojson
+    polygons-subdivision.geojson
     world-lowres.geojson
 ```
 
 Expected results SHOULD be stored with enough precision to detect accidental algorithm changes.
+
+The subdivision fixtures MUST include sparse long edges, high-curvature projected edges, seam-adjacent edges, polar edges, tiny rings, and a case that forces the deterministic safety limit/failure path.
 
 A stable fixture is not regenerated merely because the implementation changes.
 
@@ -570,8 +773,10 @@ AERIS SHOULD generate diagnostic renders containing:
 - interruption seams;
 - central meridians;
 - source-country outlines;
+- adaptive-subdivision vertices and accepted intervals;
 - per-region debug coloring;
-- local area-error heatmaps produced from Jacobian sampling.
+- local area-error heatmaps produced from Jacobian sampling;
+- polygon-discretization error overlays for selected diagnostic features.
 
 These outputs are engineering diagnostics and are not canonical map styles.
 
@@ -588,7 +793,7 @@ External libraries MAY be used for:
 - development tooling;
 - optional import/export backends.
 
-The core authalic transformation, spherical rotation, region selection, Sinusoidal projection, Mollweide projection, seam ownership, and deterministic clipping behavior SHOULD be owned by AERIS if doing so avoids version or deployment instability.
+The core authalic transformation, spherical rotation, region selection, Sinusoidal projection, Mollweide projection, source-edge evaluation, adaptive subdivision, seam ownership, and deterministic clipping behavior SHOULD be owned by AERIS if doing so avoids version or deployment instability.
 
 AERIS must not become unable to open or render its own historical projects because a third-party projection library removed or changed a method.
 
@@ -630,7 +835,10 @@ The following items MUST be closed before this document may become a stable proj
 9. build immutable conformance fixtures;
 10. run differential, polygon, seam, polar, and destructive numerical tests;
 11. compare against at least two independent implementations or references where possible;
-12. document any intentional deviation from Philbrick as an AERIS-specific projection rather than silently changing history.
+12. document any intentional deviation from Philbrick as an AERIS-specific projection rather than silently changing history;
+13. freeze canonical source-edge semantics and import-normalization rules;
+14. freeze the adaptive-subdivision algorithm, tolerances, convergence rules, and failure limits;
+15. demonstrate that projected polygon discretization remains inside the published feature-level area budget for representative and adversarial geometry.
 
 Until these are closed, AERIS may experiment with renders but must label them as draft projection output.
 
@@ -672,8 +880,10 @@ The final implementation must be able to answer, for any rendered area:
 Where did these coordinates come from?
 Which projection region produced them?
 Which exact mathematics was used?
+What did every canonical source edge mean?
+How was each projected curve approximated?
 What source geometry was projected?
-What numerical error was measured?
+What numerical and discretization error was measured?
 Does the planar area still equal the geographic area within the published bound?
 ```
 
