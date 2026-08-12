@@ -4,13 +4,11 @@
 #pragma once
 
 #include "aeris/geo/wgs84.hpp"
+#include "aeris/geometry/planar.hpp"
 
 namespace aeris::projection {
 
-struct PlanarPoint final {
-    double x = 0.0;
-    double y = 0.0;
-};
+using PlanarPoint = geometry::PlanarPoint;
 
 struct SphericalPoint final {
     double longitude_rad = 0.0;

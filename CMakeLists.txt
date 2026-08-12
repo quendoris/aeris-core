@@ -11,6 +11,7 @@ project(
 )
 
 option(AERIS_BUILD_TESTS "Build AERIS tests" ON)
+option(AERIS_BUILD_TOOLS "Build AERIS development tools" ON)
 option(AERIS_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" OFF)
 
 function(aeris_enable_warnings target_name)
@@ -36,7 +37,9 @@ endfunction()
 add_library(aeris_core STATIC
     src/geo/rotation.cpp
     src/geo/wgs84.cpp
+    src/geometry/planar.cpp
     src/projection/primitives.cpp
+    src/projection/subdivide.cpp
 )
 
 add_library(AERIS::core ALIAS aeris_core)
@@ -54,6 +57,16 @@ set_target_properties(aeris_core PROPERTIES
 )
 
 aeris_enable_warnings(aeris_core)
+
+if(AERIS_BUILD_TOOLS)
+    add_executable(aeris_diagnostic_svg
+        tools/diagnostic_svg.cpp
+    )
+    target_link_libraries(aeris_diagnostic_svg PRIVATE AERIS::core)
+    target_compile_features(aeris_diagnostic_svg PRIVATE cxx_std_17)
+    set_target_properties(aeris_diagnostic_svg PROPERTIES CXX_EXTENSIONS OFF)
+    aeris_enable_warnings(aeris_diagnostic_svg)
+endif()
 
 if(AERIS_BUILD_TESTS)
     include(CTest)
