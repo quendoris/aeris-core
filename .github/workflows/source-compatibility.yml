@@ -11,6 +11,12 @@ on:
       - compat/natural-earth/**
       - tools/real_world_probe.cpp
       - CMakeLists.txt
+      - include/aeris/source/**
+      - src/source/**
+      - include/aeris/geometry/**
+      - src/geometry/**
+      - include/aeris/projection/**
+      - src/projection/**
   workflow_dispatch:
 
 permissions:
