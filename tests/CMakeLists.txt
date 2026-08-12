@@ -67,6 +67,15 @@ set_target_properties(aeris_test_polygon_area_invariant PROPERTIES CXX_EXTENSION
 aeris_enable_warnings(aeris_test_polygon_area_invariant)
 add_test(NAME polygon_area_invariant COMMAND aeris_test_polygon_area_invariant)
 
+add_executable(aeris_test_ring_projection_budget
+    test_ring_projection_budget.cpp
+)
+target_link_libraries(aeris_test_ring_projection_budget PRIVATE AERIS::core)
+target_compile_features(aeris_test_ring_projection_budget PRIVATE cxx_std_17)
+set_target_properties(aeris_test_ring_projection_budget PROPERTIES CXX_EXTENSIONS OFF)
+aeris_enable_warnings(aeris_test_ring_projection_budget)
+add_test(NAME ring_projection_budget COMMAND aeris_test_ring_projection_budget)
+
 add_executable(aeris_test_globe_view
     test_globe_view.cpp
 )
