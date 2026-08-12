@@ -3,6 +3,7 @@
 
 #include "aeris/geo/wgs84.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
@@ -35,6 +36,34 @@ void expect_true(const std::string_view name, const bool condition) {
         ++failures;
         std::cerr << "FAIL " << name << '\n';
     }
+}
+
+[[nodiscard]] double authalic_q_derivative(const double phi) {
+    const double sin_phi = std::sin(phi);
+    const double cos_phi = std::cos(phi);
+    const double denominator =
+        1.0 - aeris::geo::Wgs84::eccentricity_squared * sin_phi * sin_phi;
+
+    return
+        2.0 * (1.0 - aeris::geo::Wgs84::eccentricity_squared) * cos_phi /
+        (denominator * denominator);
+}
+
+[[nodiscard]] double inverse_round_trip_tolerance(const double phi) {
+    // A fixed angular tolerance becomes mathematically dishonest near a pole:
+    // q(phi) flattens as dq/dphi -> 0, so a few unavoidable binary64 ULPs in
+    // q/q_p map to a larger angular interval. Bound that interval explicitly
+    // from the local derivative instead of globally weakening the test.
+    constexpr double base_angular_tolerance = 2e-14;
+    constexpr double q_ulp_budget = 4.0 * std::numeric_limits<double>::epsilon();
+
+    const double q_tolerance = q_ulp_budget * std::abs(aeris::geo::authalic_q_pole());
+    const double derivative = std::abs(authalic_q_derivative(phi));
+    if (derivative == 0.0) {
+        return std::numeric_limits<double>::infinity();
+    }
+
+    return std::max(base_angular_tolerance, q_tolerance / derivative);
 }
 
 void test_wgs84_constants() {
@@ -129,6 +158,9 @@ void test_monotonicity() {
 }
 
 void test_authalic_inverse_round_trip() {
+    constexpr double q_ulp_budget = 4.0 * std::numeric_limits<double>::epsilon();
+    const double q_tolerance = q_ulp_budget * std::abs(aeris::geo::authalic_q_pole());
+
     for (int i = -899; i <= 899; ++i) {
         const double phi = static_cast<double>(i) * aeris::geo::kPi / 1800.0;
         const auto beta = aeris::geo::authalic_latitude(phi);
@@ -140,7 +172,18 @@ void test_authalic_inverse_round_trip() {
         const auto recovered = aeris::geo::geodetic_latitude_from_authalic(beta.value);
         expect_true("authalic inverse succeeds", recovered.ok());
         if (recovered.ok()) {
-            expect_near("authalic inverse round-trip", recovered.value, phi, 2e-14);
+            expect_near(
+                "authalic inverse round-trip",
+                recovered.value,
+                phi,
+                inverse_round_trip_tolerance(phi)
+            );
+            expect_near(
+                "authalic inverse preserves q within binary64 budget",
+                aeris::geo::authalic_q(recovered.value),
+                aeris::geo::authalic_q(phi),
+                q_tolerance
+            );
         }
     }
 
