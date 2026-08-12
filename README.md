@@ -8,9 +8,9 @@ The project began from a simple personal goal: make a world map worth printing a
 
 ## Status
 
-AERIS is in **pre-implementation design**. There is no usable release yet.
+AERIS is in **early implementation**.
 
-The project format specification and projection contract are currently drafts. No draft `.aeris` file or draft projection output is promised long-term compatibility until the relevant contracts are explicitly frozen.
+The first production code now covers the WGS84-to-authalic-sphere reference math and its tests. The project format and projection composition remain drafts. No draft `.aeris` file or draft projection output is promised long-term compatibility until the relevant contracts are explicitly frozen.
 
 ## Core principles
 
@@ -24,6 +24,22 @@ The project format specification and projection contract are currently drafts. N
 - **Broad hardware support.** A correct CPU reference path is mandatory; optional acceleration must not become a hidden compatibility requirement.
 - **Dependencies earn their place.** A small, well-tested internal implementation is preferred over dependency instability when an external library is needed only for a narrow function.
 - **Attribution follows intellectual history, not visibility or marketing reach.**
+
+## Implementation baseline
+
+The reference core is written in portable **C++17** and built with CMake. Core mathematics has no Qt, Python, GIS-framework, GPU, or network runtime dependency.
+
+AERIS intentionally keeps the future UI/toolkit layer outside the mathematical and project-model contracts. The GUI may evolve; historical project files and reference mathematics must remain independently readable and testable.
+
+### Build and test
+
+```sh
+cmake -S . -B build -DAERIS_BUILD_TESTS=ON
+cmake --build build
+ctest --test-dir build --output-on-failure
+```
+
+The current test suite validates WGS84 constants, authalic radius, reference authalic latitudes, pole behavior, odd symmetry, monotonicity, and fail-closed handling of invalid inputs.
 
 ## Planned project and export formats
 
@@ -59,6 +75,7 @@ See [ACKNOWLEDGEMENTS.md](ACKNOWLEDGEMENTS.md) for the historical lineage, [docs
 
 - [AERIS Project Format — Draft](docs/AERIS-PROJECT-FORMAT.md)
 - [Sinu-Mollweide Projection Contract — Draft](docs/PROJECTION-SINU-MOLLWEIDE.md)
+- [UI Architecture Contract](docs/UI-ARCHITECTURE.md)
 - [Engineering Policy](docs/ENGINEERING-POLICY.md)
 - [Attribution Policy](docs/ATTRIBUTION-POLICY.md)
 - [Acknowledgements](ACKNOWLEDGEMENTS.md)
