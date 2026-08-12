@@ -40,6 +40,8 @@ struct SnapshotManifest final {
     std::vector<ResourceSpec> resources;
 };
 
+struct SnapshotVerificationResult;
+
 class VerifiedSnapshot final {
 public:
     VerifiedSnapshot(const VerifiedSnapshot&) = default;
@@ -56,7 +58,6 @@ public:
     ) const;
 
 private:
-    friend struct SnapshotVerificationResult;
     friend SnapshotVerificationResult verify_local_snapshot(
         const std::filesystem::path&,
         const SnapshotManifest&
