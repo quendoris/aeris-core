@@ -1,0 +1,115 @@
+// SPDX-FileCopyrightText: 2026 quendoris
+// SPDX-License-Identifier: AGPL-3.0-only
+
+#pragma once
+
+#include "aeris/geometry/geographic.hpp"
+
+#include <cstddef>
+#include <cstdint>
+#include <string>
+#include <string_view>
+#include <vector>
+
+namespace aeris::source {
+
+enum class Capability : std::uint32_t {
+    none = 0U,
+    land = 1U << 0U,
+    admin0 = 1U << 1U,
+    admin1 = 1U << 2U,
+    disputed_boundaries = 1U << 3U,
+    physical_relief = 1U << 4U,
+    hydrography = 1U << 5U,
+    imagery = 1U << 6U,
+};
+
+using CapabilityMask = std::uint32_t;
+
+[[nodiscard]] constexpr CapabilityMask capability_bit(const Capability capability) noexcept {
+    return static_cast<CapabilityMask>(capability);
+}
+
+[[nodiscard]] constexpr bool has_capability(
+    const CapabilityMask mask,
+    const Capability capability
+) noexcept {
+    return (mask & capability_bit(capability)) != 0U;
+}
+
+enum class TemporalClass : std::uint8_t {
+    timeless_or_structural = 0U,
+    slow_change,
+    periodic,
+    fast_change,
+};
+
+enum class SourceError : std::uint8_t {
+    none = 0U,
+    invalid_request,
+    unsupported_capability,
+    unsupported_worldview,
+    unavailable_snapshot,
+    malformed_source,
+    provenance_incomplete,
+    normalization_failed,
+};
+
+struct Provenance final {
+    std::string provider;
+    std::string dataset;
+    std::string snapshot;
+    std::string source_uri;
+    std::string license_id;
+    std::string content_sha256;
+    std::string retrieved_at_utc;
+    std::string worldview;
+
+    [[nodiscard]] bool complete() const noexcept;
+};
+
+struct AdapterDescriptor final {
+    std::string_view adapter_id;
+    std::string_view provider;
+    CapabilityMask capabilities = 0U;
+    TemporalClass temporal_class = TemporalClass::periodic;
+};
+
+struct Feature final {
+    std::string stable_id;
+    std::string source_id;
+    std::vector<geometry::LinearRing> rings;
+};
+
+struct Request final {
+    Capability capability = Capability::none;
+    std::string snapshot;
+    std::string worldview;
+};
+
+struct Result final {
+    Provenance provenance{};
+    std::vector<Feature> features;
+    SourceError error = SourceError::none;
+    std::string diagnostic;
+
+    [[nodiscard]] bool ok() const noexcept {
+        return error == SourceError::none;
+    }
+};
+
+class Adapter {
+public:
+    virtual ~Adapter() = default;
+
+    [[nodiscard]] virtual AdapterDescriptor descriptor() const noexcept = 0;
+    [[nodiscard]] virtual Result load(const Request& request) const = 0;
+};
+
+[[nodiscard]] SourceError validate_result(
+    const Adapter& adapter,
+    const Request& request,
+    const Result& result
+) noexcept;
+
+}  // namespace aeris::source
