@@ -6,13 +6,9 @@
 namespace aeris::source {
 
 bool Provenance::complete() const noexcept {
-    return !provider.empty() &&
-           !dataset.empty() &&
-           !snapshot.empty() &&
-           !source_uri.empty() &&
-           !license_id.empty() &&
-           !content_sha256.empty() &&
-           !retrieved_at_utc.empty();
+    return !provider.empty() && !dataset.empty() && !snapshot.empty() &&
+           !source_uri.empty() && !license_id.empty() &&
+           !content_sha256.empty() && !retrieved_at_utc.empty();
 }
 
 SourceError validate_result(
@@ -33,6 +29,9 @@ SourceError validate_result(
     }
     if (!result.provenance.complete()) {
         return SourceError::provenance_incomplete;
+    }
+    if (result.provenance.provider != descriptor.provider) {
+        return SourceError::malformed_source;
     }
     if (!request.snapshot.empty() && result.provenance.snapshot != request.snapshot) {
         return SourceError::unavailable_snapshot;

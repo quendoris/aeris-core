@@ -4,6 +4,7 @@
 #pragma once
 
 #include "aeris/geometry/geographic.hpp"
+#include "aeris/source/acquisition.hpp"
 
 #include <cstdint>
 #include <string>
@@ -109,12 +110,17 @@ struct Result final {
     }
 };
 
+// Adapters are intentionally snapshot-independent decoders. A single adapter
+// implementation must be able to decode any compatible verified snapshot.
 class Adapter {
 public:
     virtual ~Adapter() = default;
 
     [[nodiscard]] virtual AdapterDescriptor descriptor() const noexcept = 0;
-    [[nodiscard]] virtual Result load(const Request& request) const = 0;
+    [[nodiscard]] virtual Result load(
+        const VerifiedSnapshot& snapshot,
+        const Request& request
+    ) const = 0;
 };
 
 [[nodiscard]] SourceError validate_result(

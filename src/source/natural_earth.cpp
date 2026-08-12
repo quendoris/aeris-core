@@ -63,9 +63,6 @@ constexpr const char* kProjectionResource = "crs.prj";
 
 }  // namespace
 
-NaturalEarthLand110mAdapter::NaturalEarthLand110mAdapter(VerifiedSnapshot snapshot)
-    : snapshot_(std::move(snapshot)) {}
-
 AdapterDescriptor NaturalEarthLand110mAdapter::descriptor() const noexcept {
     return {
         "natural-earth.ne-110m-land.shapefile.v1",
@@ -75,7 +72,10 @@ AdapterDescriptor NaturalEarthLand110mAdapter::descriptor() const noexcept {
     };
 }
 
-Result NaturalEarthLand110mAdapter::load(const Request& request) const {
+Result NaturalEarthLand110mAdapter::load(
+    const VerifiedSnapshot& snapshot,
+    const Request& request
+) const {
     if (request.capability != Capability::land) {
         return failure(SourceError::unsupported_capability, "Natural Earth 110m land adapter supplies land only");
     }
@@ -83,7 +83,7 @@ Result NaturalEarthLand110mAdapter::load(const Request& request) const {
         return failure(SourceError::unsupported_worldview, "physical land geometry has no worldview selector");
     }
 
-    const SnapshotManifest& manifest = snapshot_.manifest();
+    const SnapshotManifest& manifest = snapshot.manifest();
     if (manifest.provider != kProviderName || manifest.dataset != kDatasetName) {
         return failure(SourceError::malformed_source, "verified snapshot identity does not match Natural Earth 110m land");
     }
@@ -91,9 +91,9 @@ Result NaturalEarthLand110mAdapter::load(const Request& request) const {
         return failure(SourceError::unavailable_snapshot, "requested snapshot differs from verified snapshot");
     }
 
-    const auto shp_path = snapshot_.resource_path(kGeometryResource);
-    const auto version_path = snapshot_.resource_path(kVersionResource);
-    const auto projection_path = snapshot_.resource_path(kProjectionResource);
+    const auto shp_path = snapshot.resource_path(kGeometryResource);
+    const auto version_path = snapshot.resource_path(kVersionResource);
+    const auto projection_path = snapshot.resource_path(kProjectionResource);
     if (!shp_path.has_value() || !version_path.has_value() || !projection_path.has_value()) {
         return failure(SourceError::provenance_incomplete, "verified Natural Earth snapshot lacks required logical resources");
     }
@@ -119,7 +119,7 @@ Result NaturalEarthLand110mAdapter::load(const Request& request) const {
     result.provenance.dataset_version = dataset_version;
     result.provenance.source_uri = manifest.source_uri;
     result.provenance.license_id = "LicenseRef-Natural-Earth-Public-Domain";
-    result.provenance.content_sha256 = snapshot_.content_sha256();
+    result.provenance.content_sha256 = snapshot.content_sha256();
     result.provenance.retrieved_at_utc = manifest.retrieved_at_utc;
 
     result.features.reserve(parsed.records.size());

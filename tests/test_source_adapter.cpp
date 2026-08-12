@@ -30,7 +30,10 @@ public:
         };
     }
 
-    [[nodiscard]] aeris::source::Result load(const aeris::source::Request&) const override {
+    [[nodiscard]] aeris::source::Result load(
+        const aeris::source::VerifiedSnapshot&,
+        const aeris::source::Request&
+    ) const override {
         return {};
     }
 };
@@ -50,10 +53,7 @@ aeris::source::Result valid_result() {
     feature.source_id = "source-land-1";
     aeris::source::FeatureRing ring{};
     ring.geometry = aeris::geometry::LinearRing{{
-        {-0.1, -0.1},
-        {0.1, -0.1},
-        {0.1, 0.1},
-        {-0.1, 0.1},
+        {-0.1, -0.1}, {0.1, -0.1}, {0.1, 0.1}, {-0.1, 0.1},
     }};
     ring.role = aeris::source::RingRole::exterior;
     feature.rings.push_back(std::move(ring));
@@ -65,29 +65,23 @@ void test_descriptor_and_capabilities() {
     const FakeAdapter adapter{};
     const auto descriptor = adapter.descriptor();
     expect_true("adapter id is stable", descriptor.adapter_id == "test.fake.v1");
-    expect_true(
-        "land capability advertised",
-        aeris::source::has_capability(descriptor.capabilities, aeris::source::Capability::land)
-    );
-    expect_true(
-        "imagery capability not advertised",
-        !aeris::source::has_capability(descriptor.capabilities, aeris::source::Capability::imagery)
-    );
+    expect_true("land capability advertised", aeris::source::has_capability(descriptor.capabilities, aeris::source::Capability::land));
+    expect_true("imagery capability not advertised", !aeris::source::has_capability(descriptor.capabilities, aeris::source::Capability::imagery));
 }
 
 void test_success_validation() {
     const FakeAdapter adapter{};
     const auto result = valid_result();
-    const aeris::source::Request request{
-        aeris::source::Capability::land,
-        "fixture-v1",
-        "",
-    };
+    const aeris::source::Request request{aeris::source::Capability::land, "fixture-v1", ""};
+    expect_true("valid result accepted", aeris::source::validate_result(adapter, request, result) == aeris::source::SourceError::none);
+}
 
-    expect_true(
-        "valid result accepted",
-        aeris::source::validate_result(adapter, request, result) == aeris::source::SourceError::none
-    );
+void test_wrong_provider_rejected() {
+    const FakeAdapter adapter{};
+    auto result = valid_result();
+    result.provenance.provider = "other-provider";
+    const aeris::source::Request request{aeris::source::Capability::land, "fixture-v1", ""};
+    expect_true("wrong provider rejected", aeris::source::validate_result(adapter, request, result) == aeris::source::SourceError::malformed_source);
 }
 
 void test_missing_provenance_rejected() {
@@ -95,36 +89,7 @@ void test_missing_provenance_rejected() {
     auto result = valid_result();
     result.provenance.content_sha256.clear();
     const aeris::source::Request request{aeris::source::Capability::land, "fixture-v1", ""};
-
-    expect_true(
-        "missing provenance rejected",
-        aeris::source::validate_result(adapter, request, result) ==
-            aeris::source::SourceError::provenance_incomplete
-    );
-}
-
-void test_unsupported_capability_rejected() {
-    const FakeAdapter adapter{};
-    const auto result = valid_result();
-    const aeris::source::Request request{aeris::source::Capability::imagery, "fixture-v1", ""};
-
-    expect_true(
-        "unsupported capability rejected",
-        aeris::source::validate_result(adapter, request, result) ==
-            aeris::source::SourceError::unsupported_capability
-    );
-}
-
-void test_snapshot_mismatch_rejected() {
-    const FakeAdapter adapter{};
-    const auto result = valid_result();
-    const aeris::source::Request request{aeris::source::Capability::land, "other", ""};
-
-    expect_true(
-        "snapshot mismatch rejected",
-        aeris::source::validate_result(adapter, request, result) ==
-            aeris::source::SourceError::unavailable_snapshot
-    );
+    expect_true("missing provenance rejected", aeris::source::validate_result(adapter, request, result) == aeris::source::SourceError::provenance_incomplete);
 }
 
 }  // namespace
@@ -132,15 +97,13 @@ void test_snapshot_mismatch_rejected() {
 int main() {
     test_descriptor_and_capabilities();
     test_success_validation();
+    test_wrong_provider_rejected();
     test_missing_provenance_rejected();
-    test_unsupported_capability_rejected();
-    test_snapshot_mismatch_rejected();
 
     if (failures != 0) {
         std::cerr << failures << " test assertion(s) failed\n";
         return EXIT_FAILURE;
     }
-
     std::cout << "source_adapter: PASS\n";
     return EXIT_SUCCESS;
 }

@@ -2,7 +2,7 @@
 
 **Status:** DRAFT IMPLEMENTATION CONTRACT
 
-AERIS separates **transport**, **snapshot verification**, and **provider-specific decoding**.
+AERIS separates transport, snapshot verification, adapter decoding, and source binding.
 
 ```text
 network / archive / USB / local cache
@@ -20,113 +20,79 @@ network / archive / USB / local cache
                 v
          VerifiedSnapshot
                 |
-                v
-          SourceAdapter
-                |
-                v
-      canonical AERIS geometry
+                +------------------+
+                |                  |
+                v                  v
+         SourceAdapter       project binding
+      stateless decoder   adapter/snapshot/hash
+                |                  |
+                +--------+---------+
+                         v
+                 AdapterRegistry
+                         |
+                         v
+                canonical features
 ```
 
 ## 1. Acquisition is not decoding
 
-An acquisition backend may download a release, copy a directory, unpack an archive, read removable media, or recover an exact snapshot from a content-addressed cache.
+An acquisition backend may download a release, copy a directory, unpack an archive, read removable media, or recover an exact snapshot from a content-addressed cache. It does not interpret map semantics.
 
-It does not interpret coastlines, borders, political policy, CRS semantics, or polygon topology.
+A source adapter performs no transport. It receives a `VerifiedSnapshot` and decodes any compatible snapshot of the provider/dataset format it declares.
 
-A source adapter does not perform network access. It receives a verified local snapshot and interprets only the provider/dataset format it declares.
+## 2. Adapters are snapshot-independent
 
-This division keeps offline use, reproducible builds, testing, and future transport mechanisms independent of map semantics.
-
-## 2. Snapshot manifest
-
-A snapshot manifest identifies one exact dataset snapshot and every byte resource needed by an adapter.
-
-Each resource declares:
+An adapter ID identifies a decoding/normalization contract, not a particular year of the world.
 
 ```text
-logical_name
-relative_path
-sha256
-optional exact size
+adapter_id = natural-earth.ne-110m-land.shapefile.v1
+snapshot   = v5.1.2
 ```
 
-Logical names are adapter-facing roles such as `geometry.shp`, `crs.prj`, or `dataset.version`. The adapter does not need to know how the files were acquired.
+A later compatible Natural Earth snapshot should reuse the same adapter. If the source format or semantic contract changes incompatibly, that is when a new adapter version is justified.
 
-The manifest also records:
+## 3. Snapshot manifest and verification
 
-```text
-provider
-dataset
-snapshot
-source_uri
-retrieved_at_utc
-```
+Each resource declares a logical name, relative path, SHA-256, and optionally an exact size. `verify_local_snapshot()` rejects incomplete manifests, traversal/escape paths, duplicate resources, missing/non-regular files, size mismatches, and hash mismatches.
 
-Acquisition time is supplied by the acquisition layer. Adapters must not call the system clock to manufacture provenance during decoding.
-
-## 3. Verification boundary
-
-`verify_local_snapshot()` is the common trust boundary for all acquisition mechanisms.
-
-It MUST reject:
-
-- incomplete manifests;
-- absolute or traversal resource paths;
-- symlink/path resolution escaping the snapshot root;
-- duplicate logical resource names;
-- duplicate normalized paths;
-- missing resources;
-- non-regular-file resources;
-- exact-size mismatches where a size is specified;
-- non-canonical or mismatching SHA-256 values.
-
-Only a successful verification operation can construct a `VerifiedSnapshot`.
+Only successful verification can construct a `VerifiedSnapshot`.
 
 ## 4. Aggregate content identity
 
-A dataset may require several resources. AERIS therefore does not identify a snapshot merely by the hash of its primary geometry file.
+AERIS computes a deterministic aggregate SHA-256 over the verified resource set. The aggregate includes logical names, portable normalized paths, resource hashes, and observed sizes. It excludes retrieval time and transport URI so identical bytes acquired through different routes retain identical content identity.
 
-After every resource is verified, AERIS computes a deterministic aggregate SHA-256 over the sorted logical resource manifest using a versioned domain separator.
+## 5. Project source binding
 
-The aggregate depends on:
+A persistent project does not store provider-specific decoder state. It stores a source binding containing at minimum:
 
-- logical resource names;
-- normalized portable relative paths;
-- verified per-resource SHA-256 hashes;
-- exact observed byte sizes.
+```text
+adapter_id
+capability
+snapshot
+worldview
+expected_content_sha256
+```
 
-It deliberately does not depend on retrieval time or transport location. The same resource set acquired on two machines therefore has the same content identity.
+The registry resolves the adapter, verifies that the capability is advertised, checks the pinned snapshot content identity, invokes the adapter, and re-validates returned provenance.
 
-Individual resource hashes remain available in the snapshot manifest.
+Thus a project can say exactly **which world snapshot it used** without embedding assumptions about how that provider works.
 
-## 5. Immutability contract
+## 6. Freshness is not truth replacement
 
-`VerifiedSnapshot` means **verified at the boundary**, not that the host filesystem has magically become immutable.
+A newer snapshot may be offered by acquisition/UI logic, but it does not overwrite a saved binding. Updating a source is an explicit project mutation producing a new pinned content identity.
 
-Production acquisition/cache backends should materialize snapshots into content-addressed, non-user-edited storage and avoid mutating verified paths in place. If hostile concurrent filesystem mutation is part of a future threat model, AERIS must use stronger handle-based or copied-content semantics rather than pretending pathname verification alone eliminates TOCTOU races.
+A different worldview is likewise a different source binding choice, not a silently newer truth.
 
-This limitation is explicit and must not be hidden behind the type name.
+## 7. Filesystem limitation
 
-## 6. Source adapters
+`VerifiedSnapshot` means verified at the boundary. Production caches should materialize snapshots into content-addressed, non-user-edited storage. Path verification alone is not claimed to defeat hostile concurrent filesystem mutation; a stronger threat model would require handle-based or copied-content semantics.
 
-A source adapter consumes a `VerifiedSnapshot` and must still validate semantic requirements that byte hashing cannot establish, including:
+## 8. Principle
 
-- expected provider and dataset identity;
-- required logical resources;
-- CRS meaning;
-- dataset-internal version metadata;
-- source geometry structure;
-- edge semantics and normalization;
-- requested worldview/capability support.
+Transport can change without changing adapters.
 
-The adapter emits canonical AERIS features and provenance whose `content_sha256` identifies the whole verified resource set.
+Snapshots can change without changing adapters.
 
-## 7. Principle
+Providers can change without changing projection or rendering.
 
-Transport changes without changing adapters.
-
-Providers change without changing projection or rendering.
-
-Snapshots change without changing the project format.
-
-AERIS owns the stable contracts between all three.
+AERIS owns the stable contracts between all of them.
