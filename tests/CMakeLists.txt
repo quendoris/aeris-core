@@ -40,6 +40,15 @@ set_target_properties(aeris_test_planar_geometry PROPERTIES CXX_EXTENSIONS OFF)
 aeris_enable_warnings(aeris_test_planar_geometry)
 add_test(NAME planar_geometry COMMAND aeris_test_planar_geometry)
 
+add_executable(aeris_test_geographic_area
+    test_geographic_area.cpp
+)
+target_link_libraries(aeris_test_geographic_area PRIVATE AERIS::core)
+target_compile_features(aeris_test_geographic_area PRIVATE cxx_std_17)
+set_target_properties(aeris_test_geographic_area PROPERTIES CXX_EXTENSIONS OFF)
+aeris_enable_warnings(aeris_test_geographic_area)
+add_test(NAME geographic_area COMMAND aeris_test_geographic_area)
+
 add_executable(aeris_test_subdivision
     test_subdivision.cpp
 )
@@ -48,6 +57,15 @@ target_compile_features(aeris_test_subdivision PRIVATE cxx_std_17)
 set_target_properties(aeris_test_subdivision PROPERTIES CXX_EXTENSIONS OFF)
 aeris_enable_warnings(aeris_test_subdivision)
 add_test(NAME adaptive_subdivision COMMAND aeris_test_subdivision)
+
+add_executable(aeris_test_polygon_area_invariant
+    test_polygon_area_invariant.cpp
+)
+target_link_libraries(aeris_test_polygon_area_invariant PRIVATE AERIS::core)
+target_compile_features(aeris_test_polygon_area_invariant PRIVATE cxx_std_17)
+set_target_properties(aeris_test_polygon_area_invariant PROPERTIES CXX_EXTENSIONS OFF)
+aeris_enable_warnings(aeris_test_polygon_area_invariant)
+add_test(NAME polygon_area_invariant COMMAND aeris_test_polygon_area_invariant)
 
 add_executable(aeris_test_globe_view
     test_globe_view.cpp
