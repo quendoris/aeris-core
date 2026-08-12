@@ -10,7 +10,7 @@ The project began from a simple personal goal: make a world map worth printing a
 
 AERIS is in **pre-implementation design**. There is no usable release yet.
 
-The project format specification is currently a draft. No draft `.aeris` file is promised long-term compatibility until **AERIS Project Format 1.0** is explicitly frozen.
+The project format specification and projection contract are currently drafts. No draft `.aeris` file or draft projection output is promised long-term compatibility until the relevant contracts are explicitly frozen.
 
 ## Core principles
 
@@ -51,11 +51,14 @@ AERIS will not impose an arbitrary "8K"-style ceiling. Large raster exports are 
 
 AERIS is presently exploring the **Philbrick Sinu-Mollweide** equal-area projection family as its primary visual and mathematical reference. Cartographic literature attributes this construction to **Allen K. Philbrick (1953)**. It combines sinusoidal and Mollweide ideas in a different arrangement from Goode Homolosine.
 
-See [ACKNOWLEDGEMENTS.md](ACKNOWLEDGEMENTS.md) for the historical lineage and [docs/ATTRIBUTION-POLICY.md](docs/ATTRIBUTION-POLICY.md) for the project's attribution rules.
+The implementation is not allowed to infer historical projection constants from appearance alone. The exact Philbrick composition, orientation, interruptions, seam ownership, and numerical contract must be verified and specified before the projection is declared stable.
+
+See [ACKNOWLEDGEMENTS.md](ACKNOWLEDGEMENTS.md) for the historical lineage, [docs/PROJECTION-SINU-MOLLWEIDE.md](docs/PROJECTION-SINU-MOLLWEIDE.md) for the mathematical draft, and [docs/ATTRIBUTION-POLICY.md](docs/ATTRIBUTION-POLICY.md) for the project's attribution rules.
 
 ## Documents
 
 - [AERIS Project Format — Draft](docs/AERIS-PROJECT-FORMAT.md)
+- [Sinu-Mollweide Projection Contract — Draft](docs/PROJECTION-SINU-MOLLWEIDE.md)
 - [Engineering Policy](docs/ENGINEERING-POLICY.md)
 - [Attribution Policy](docs/ATTRIBUTION-POLICY.md)
 - [Acknowledgements](ACKNOWLEDGEMENTS.md)
