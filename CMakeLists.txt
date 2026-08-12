@@ -11,6 +11,27 @@ project(
 )
 
 option(AERIS_BUILD_TESTS "Build AERIS tests" ON)
+option(AERIS_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" OFF)
+
+function(aeris_enable_warnings target_name)
+    if(MSVC)
+        target_compile_options(${target_name} PRIVATE /W4 /permissive-)
+        if(AERIS_WARNINGS_AS_ERRORS)
+            target_compile_options(${target_name} PRIVATE /WX)
+        endif()
+    else()
+        target_compile_options(${target_name} PRIVATE
+            -Wall
+            -Wextra
+            -Wpedantic
+            -Wconversion
+            -Wsign-conversion
+        )
+        if(AERIS_WARNINGS_AS_ERRORS)
+            target_compile_options(${target_name} PRIVATE -Werror)
+        endif()
+    endif()
+endfunction()
 
 add_library(aeris_core STATIC
     src/geo/wgs84.cpp
@@ -30,17 +51,7 @@ set_target_properties(aeris_core PROPERTIES
     POSITION_INDEPENDENT_CODE ON
 )
 
-if(MSVC)
-    target_compile_options(aeris_core PRIVATE /W4 /permissive-)
-else()
-    target_compile_options(aeris_core PRIVATE
-        -Wall
-        -Wextra
-        -Wpedantic
-        -Wconversion
-        -Wsign-conversion
-    )
-endif()
+aeris_enable_warnings(aeris_core)
 
 if(AERIS_BUILD_TESTS)
     include(CTest)
