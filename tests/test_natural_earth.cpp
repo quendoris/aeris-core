@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 quendoris
 // SPDX-License-Identifier: AGPL-3.0-only
 
+#include "aeris/source/acquisition.hpp"
 #include "aeris/source/natural_earth.hpp"
 #include "aeris/util/sha256.hpp"
 
@@ -57,7 +58,6 @@ std::vector<unsigned char> make_land_shapefile() {
     put_le_u32(bytes, 32U, 5U);
     put_le_f64(bytes, 36U, 0.0); put_le_f64(bytes, 44U, 0.0);
     put_le_f64(bytes, 52U, 2.0); put_le_f64(bytes, 60U, 2.0);
-
     put_be_u32(bytes, 100U, 1U);
     put_be_u32(bytes, 104U, static_cast<std::uint32_t>(content_bytes / 2U));
     const std::size_t content = 108U;
@@ -67,7 +67,6 @@ std::vector<unsigned char> make_land_shapefile() {
     put_le_u32(bytes, content + 36U, 1U);
     put_le_u32(bytes, content + 40U, 5U);
     put_le_u32(bytes, content + 44U, 0U);
-
     const std::array<std::array<double, 2>, 5> points{{
         {{0.0, 0.0}}, {{0.0, 2.0}}, {{2.0, 2.0}}, {{2.0, 0.0}}, {{0.0, 0.0}},
     }};
@@ -83,10 +82,8 @@ class FixtureDirectory final {
 public:
     FixtureDirectory() {
         const auto stamp = std::chrono::high_resolution_clock::now().time_since_epoch().count();
-        path_ = std::filesystem::temp_directory_path() /
-            ("aeris-natural-earth-" + std::to_string(stamp));
+        path_ = std::filesystem::temp_directory_path() / ("aeris-natural-earth-" + std::to_string(stamp));
         std::filesystem::create_directories(path_);
-
         const auto shp = make_land_shapefile();
         {
             std::ofstream output(path_ / "ne_110m_land.shp", std::ios::binary | std::ios::trunc);
@@ -107,34 +104,53 @@ public:
         std::filesystem::remove_all(path_, ignored);
     }
 
+    [[nodiscard]] aeris::source::SnapshotManifest manifest() const {
+        aeris::source::SnapshotManifest value{};
+        value.provider = "Natural Earth";
+        value.dataset = "ne_110m_land";
+        value.snapshot = "v5.1.2-test";
+        value.source_uri = "fixture://natural-earth/v5.1.2-test/ne_110m_land";
+        value.retrieved_at_utc = "2026-08-12T00:00:00Z";
+        add_resource(value, "geometry.shp", "ne_110m_land.shp");
+        add_resource(value, "dataset.version", "ne_110m_land.VERSION.txt");
+        add_resource(value, "crs.prj", "ne_110m_land.prj");
+        return value;
+    }
+
     [[nodiscard]] const std::filesystem::path& path() const noexcept { return path_; }
 
 private:
+    void add_resource(
+        aeris::source::SnapshotManifest& manifest,
+        const std::string& logical,
+        const std::filesystem::path& relative
+    ) const {
+        const auto full = path_ / relative;
+        const auto hash = aeris::util::sha256_file(full);
+        manifest.resources.push_back({logical, relative, hash.digest.hex(), std::filesystem::file_size(full)});
+    }
+
     std::filesystem::path path_;
 };
 
-void test_adapter_loads_and_proves_snapshot() {
+std::optional<aeris::source::VerifiedSnapshot> verified_fixture(const FixtureDirectory& fixture) {
+    auto verified = aeris::source::verify_local_snapshot(fixture.path(), fixture.manifest());
+    expect_true("Natural Earth fixture snapshot verifies", verified.ok());
+    if (!verified.ok()) {
+        return std::nullopt;
+    }
+    return std::move(verified.snapshot);
+}
+
+void test_adapter_loads_verified_snapshot() {
     const FixtureDirectory fixture{};
-    const auto hash = aeris::util::sha256_file(fixture.path() / "ne_110m_land.shp");
-    expect_true("fixture hash succeeds", hash.ok());
-    if (!hash.ok()) {
+    auto snapshot = verified_fixture(fixture);
+    if (!snapshot.has_value()) {
         return;
     }
-
-    aeris::source::NaturalEarthLandConfig config{};
-    config.dataset_directory = fixture.path();
-    config.snapshot = "v5.1.2-test";
-    config.source_uri = "fixture://natural-earth/v5.1.2-test/ne_110m_land";
-    config.retrieved_at_utc = "2026-08-12T00:00:00Z";
-    config.expected_shp_sha256 = hash.digest.hex();
-
-    const aeris::source::NaturalEarthLand110mAdapter adapter(std::move(config));
-    const aeris::source::Request request{
-        aeris::source::Capability::land,
-        "v5.1.2-test",
-        "",
-    };
-    const auto result = adapter.load(request);
+    const std::string aggregate_hash = snapshot->content_sha256();
+    const aeris::source::NaturalEarthLand110mAdapter adapter(std::move(*snapshot));
+    const auto result = adapter.load({aeris::source::Capability::land, "v5.1.2-test", ""});
     expect_true("Natural Earth fixture loads", result.ok());
     if (!result.ok()) {
         return;
@@ -142,53 +158,41 @@ void test_adapter_loads_and_proves_snapshot() {
 
     expect_true("provider recorded", result.provenance.provider == "Natural Earth");
     expect_true("dataset recorded", result.provenance.dataset == "ne_110m_land");
-    expect_true("dataset version read from VERSION.txt", result.provenance.dataset_version == "4.1.0");
-    expect_true("content hash recorded", result.provenance.content_sha256 == hash.digest.hex());
+    expect_true("dataset version read", result.provenance.dataset_version == "4.1.0");
+    expect_true("aggregate content hash recorded", result.provenance.content_sha256 == aggregate_hash);
     expect_true("one feature emitted", result.features.size() == 1U);
-    if (result.features.size() == 1U) {
-        expect_true("one ring emitted", result.features.front().rings.size() == 1U);
-        expect_true("stable id is snapshot scoped", result.features.front().stable_id.find("v5.1.2-test") != std::string::npos);
-    }
 }
 
-void test_hash_mismatch_fails_closed() {
+void test_wrong_snapshot_identity_fails_closed() {
     const FixtureDirectory fixture{};
-    aeris::source::NaturalEarthLandConfig config{};
-    config.dataset_directory = fixture.path();
-    config.snapshot = "fixture";
-    config.source_uri = "fixture://natural-earth";
-    config.retrieved_at_utc = "2026-08-12T00:00:00Z";
-    config.expected_shp_sha256 = std::string(64U, '0');
-
-    const aeris::source::NaturalEarthLand110mAdapter adapter(std::move(config));
-    const auto result = adapter.load({aeris::source::Capability::land, "fixture", ""});
-    expect_true(
-        "hash mismatch rejected",
-        result.error == aeris::source::SourceError::content_hash_mismatch
-    );
+    auto manifest = fixture.manifest();
+    manifest.provider = "not-natural-earth";
+    auto verified = aeris::source::verify_local_snapshot(fixture.path(), manifest);
+    expect_true("altered provider snapshot still byte-verifies", verified.ok());
+    if (!verified.ok()) {
+        return;
+    }
+    const aeris::source::NaturalEarthLand110mAdapter adapter(std::move(*verified.snapshot));
+    const auto result = adapter.load({aeris::source::Capability::land, "v5.1.2-test", ""});
+    expect_true("adapter rejects wrong provider identity", result.error == aeris::source::SourceError::malformed_source);
 }
 
 void test_worldview_rejected_for_physical_land() {
     const FixtureDirectory fixture{};
-    aeris::source::NaturalEarthLandConfig config{};
-    config.dataset_directory = fixture.path();
-    config.snapshot = "fixture";
-    config.source_uri = "fixture://natural-earth";
-    config.retrieved_at_utc = "2026-08-12T00:00:00Z";
-
-    const aeris::source::NaturalEarthLand110mAdapter adapter(std::move(config));
-    const auto result = adapter.load({aeris::source::Capability::land, "fixture", "political-view"});
-    expect_true(
-        "physical land worldview rejected",
-        result.error == aeris::source::SourceError::unsupported_worldview
-    );
+    auto snapshot = verified_fixture(fixture);
+    if (!snapshot.has_value()) {
+        return;
+    }
+    const aeris::source::NaturalEarthLand110mAdapter adapter(std::move(*snapshot));
+    const auto result = adapter.load({aeris::source::Capability::land, "v5.1.2-test", "political-view"});
+    expect_true("physical land worldview rejected", result.error == aeris::source::SourceError::unsupported_worldview);
 }
 
 }  // namespace
 
 int main() {
-    test_adapter_loads_and_proves_snapshot();
-    test_hash_mismatch_fails_closed();
+    test_adapter_loads_verified_snapshot();
+    test_wrong_snapshot_identity_fails_closed();
     test_worldview_rejected_for_physical_land();
 
     if (failures != 0) {

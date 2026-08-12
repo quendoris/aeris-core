@@ -3,30 +3,20 @@
 
 #pragma once
 
+#include "aeris/source/acquisition.hpp"
 #include "aeris/source/adapter.hpp"
-
-#include <filesystem>
-#include <string>
 
 namespace aeris::source {
 
-struct NaturalEarthLandConfig final {
-    std::filesystem::path dataset_directory;
-    std::string snapshot;
-    std::string source_uri;
-    std::string retrieved_at_utc;
-    std::string expected_shp_sha256;
-};
-
 class NaturalEarthLand110mAdapter final : public Adapter {
 public:
-    explicit NaturalEarthLand110mAdapter(NaturalEarthLandConfig config);
+    explicit NaturalEarthLand110mAdapter(VerifiedSnapshot snapshot);
 
     [[nodiscard]] AdapterDescriptor descriptor() const noexcept override;
     [[nodiscard]] Result load(const Request& request) const override;
 
 private:
-    NaturalEarthLandConfig config_;
+    VerifiedSnapshot snapshot_;
 };
 
 }  // namespace aeris::source

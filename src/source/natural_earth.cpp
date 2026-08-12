@@ -4,7 +4,6 @@
 #include "aeris/source/natural_earth.hpp"
 
 #include "aeris/source/shapefile.hpp"
-#include "aeris/util/sha256.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -16,34 +15,28 @@
 namespace aeris::source {
 namespace {
 
+constexpr const char* kProviderName = "Natural Earth";
 constexpr const char* kDatasetName = "ne_110m_land";
-constexpr const char* kShapefileName = "ne_110m_land.shp";
-constexpr const char* kVersionName = "ne_110m_land.VERSION.txt";
-constexpr const char* kProjectionName = "ne_110m_land.prj";
+constexpr const char* kGeometryResource = "geometry.shp";
+constexpr const char* kVersionResource = "dataset.version";
+constexpr const char* kProjectionResource = "crs.prj";
 
 [[nodiscard]] std::string read_text_file(const std::filesystem::path& path) {
     std::ifstream input(path, std::ios::binary);
     if (!input) {
         return {};
     }
-    return std::string(
-        std::istreambuf_iterator<char>(input),
-        std::istreambuf_iterator<char>()
-    );
+    return std::string(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
 }
 
 [[nodiscard]] std::string trim_ascii(std::string value) {
-    const auto not_space = [](const unsigned char c) {
-        return std::isspace(c) == 0;
-    };
-
+    const auto not_space = [](const unsigned char c) { return std::isspace(c) == 0; };
     const auto first = std::find_if(value.begin(), value.end(), [&](const char c) {
         return not_space(static_cast<unsigned char>(c));
     });
     const auto last = std::find_if(value.rbegin(), value.rend(), [&](const char c) {
         return not_space(static_cast<unsigned char>(c));
     }).base();
-
     if (first >= last) {
         return {};
     }
@@ -54,7 +47,6 @@ constexpr const char* kProjectionName = "ne_110m_land.prj";
     if (wkt.empty()) {
         return false;
     }
-
     const bool has_geographic = wkt.find("GEOGCS") != std::string::npos ||
                                 wkt.find("GEOGCRS") != std::string::npos;
     const bool has_wgs84 = wkt.find("WGS_1984") != std::string::npos ||
@@ -71,13 +63,13 @@ constexpr const char* kProjectionName = "ne_110m_land.prj";
 
 }  // namespace
 
-NaturalEarthLand110mAdapter::NaturalEarthLand110mAdapter(NaturalEarthLandConfig config)
-    : config_(std::move(config)) {}
+NaturalEarthLand110mAdapter::NaturalEarthLand110mAdapter(VerifiedSnapshot snapshot)
+    : snapshot_(std::move(snapshot)) {}
 
 AdapterDescriptor NaturalEarthLand110mAdapter::descriptor() const noexcept {
     return {
         "natural-earth.ne-110m-land.shapefile.v1",
-        "Natural Earth",
+        kProviderName,
         capability_bit(Capability::land),
         TemporalClass::slow_change,
     };
@@ -90,58 +82,51 @@ Result NaturalEarthLand110mAdapter::load(const Request& request) const {
     if (!request.worldview.empty()) {
         return failure(SourceError::unsupported_worldview, "physical land geometry has no worldview selector");
     }
-    if (config_.dataset_directory.empty() || config_.snapshot.empty() ||
-        config_.source_uri.empty() || config_.retrieved_at_utc.empty()) {
-        return failure(SourceError::invalid_request, "Natural Earth adapter configuration is incomplete");
+
+    const SnapshotManifest& manifest = snapshot_.manifest();
+    if (manifest.provider != kProviderName || manifest.dataset != kDatasetName) {
+        return failure(SourceError::malformed_source, "verified snapshot identity does not match Natural Earth 110m land");
     }
-    if (!request.snapshot.empty() && request.snapshot != config_.snapshot) {
-        return failure(SourceError::unavailable_snapshot, "requested snapshot differs from configured local snapshot");
+    if (!request.snapshot.empty() && request.snapshot != manifest.snapshot) {
+        return failure(SourceError::unavailable_snapshot, "requested snapshot differs from verified snapshot");
     }
 
-    const std::filesystem::path shp_path = config_.dataset_directory / kShapefileName;
-    const std::filesystem::path version_path = config_.dataset_directory / kVersionName;
-    const std::filesystem::path projection_path = config_.dataset_directory / kProjectionName;
+    const auto shp_path = snapshot_.resource_path(kGeometryResource);
+    const auto version_path = snapshot_.resource_path(kVersionResource);
+    const auto projection_path = snapshot_.resource_path(kProjectionResource);
+    if (!shp_path.has_value() || !version_path.has_value() || !projection_path.has_value()) {
+        return failure(SourceError::provenance_incomplete, "verified Natural Earth snapshot lacks required logical resources");
+    }
 
-    const std::string dataset_version = trim_ascii(read_text_file(version_path));
+    const std::string dataset_version = trim_ascii(read_text_file(*version_path));
     if (dataset_version.empty()) {
         return failure(SourceError::provenance_incomplete, "Natural Earth dataset VERSION.txt is missing or empty");
     }
-
-    const std::string projection_wkt = read_text_file(projection_path);
+    const std::string projection_wkt = read_text_file(*projection_path);
     if (!recognized_wgs84_prj(projection_wkt)) {
-        return failure(SourceError::malformed_source, "Natural Earth .prj is missing or is not recognized as WGS84 geographic CRS");
+        return failure(SourceError::malformed_source, "Natural Earth .prj is not recognized as WGS84 geographic CRS");
     }
 
-    const util::Sha256FileResult hash = util::sha256_file(shp_path);
-    if (!hash.ok()) {
-        return failure(SourceError::malformed_source, "unable to hash Natural Earth .shp bytes");
-    }
-    const std::string hash_hex = hash.digest.hex();
-    if (!config_.expected_shp_sha256.empty() && hash_hex != config_.expected_shp_sha256) {
-        return failure(SourceError::content_hash_mismatch, "Natural Earth .shp SHA-256 does not match configured snapshot hash");
-    }
-
-    const ShapefilePolygonResult parsed = read_polygon_shapefile(shp_path);
+    const ShapefilePolygonResult parsed = read_polygon_shapefile(*shp_path);
     if (!parsed.ok()) {
         return failure(SourceError::normalization_failed, "Natural Earth Polygon Shapefile failed strict decoding/canonicalization");
     }
 
     Result result{};
-    result.provenance.provider = "Natural Earth";
-    result.provenance.dataset = kDatasetName;
-    result.provenance.snapshot = config_.snapshot;
+    result.provenance.provider = manifest.provider;
+    result.provenance.dataset = manifest.dataset;
+    result.provenance.snapshot = manifest.snapshot;
     result.provenance.dataset_version = dataset_version;
-    result.provenance.source_uri = config_.source_uri;
+    result.provenance.source_uri = manifest.source_uri;
     result.provenance.license_id = "LicenseRef-Natural-Earth-Public-Domain";
-    result.provenance.content_sha256 = hash_hex;
-    result.provenance.retrieved_at_utc = config_.retrieved_at_utc;
+    result.provenance.content_sha256 = snapshot_.content_sha256();
+    result.provenance.retrieved_at_utc = manifest.retrieved_at_utc;
 
     result.features.reserve(parsed.records.size());
     for (const ShapefileRecord& record : parsed.records) {
         Feature feature{};
         feature.source_id = "record:" + std::to_string(record.record_number);
-        feature.stable_id =
-            std::string(kDatasetName) + ":" + config_.snapshot + ":" + feature.source_id;
+        feature.stable_id = std::string(kDatasetName) + ":" + manifest.snapshot + ":" + feature.source_id;
         feature.rings.reserve(record.rings.size());
         for (const ShapefileRing& source_ring : record.rings) {
             FeatureRing ring{};
@@ -156,7 +141,6 @@ Result NaturalEarthLand110mAdapter::load(const Request& request) const {
     if (validation != SourceError::none) {
         return failure(validation, "Natural Earth adapter output failed common source-adapter validation");
     }
-
     return result;
 }
 
