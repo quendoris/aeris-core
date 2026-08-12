@@ -161,12 +161,21 @@ Sha256Digest Sha256::finalize() noexcept {
 
     const std::uint64_t bit_length = total_bytes_ * 8ULL;
     buffer_[buffered_bytes_++] = 0x80U;
+    constexpr unsigned char zero_byte = static_cast<unsigned char>(0);
     if (buffered_bytes_ > 56U) {
-        std::fill(buffer_.begin() + static_cast<std::ptrdiff_t>(buffered_bytes_), buffer_.end(), 0U);
+        std::fill(
+            buffer_.begin() + static_cast<std::ptrdiff_t>(buffered_bytes_),
+            buffer_.end(),
+            zero_byte
+        );
         transform(buffer_.data());
         buffered_bytes_ = 0U;
     }
-    std::fill(buffer_.begin() + static_cast<std::ptrdiff_t>(buffered_bytes_), buffer_.begin() + 56, 0U);
+    std::fill(
+        buffer_.begin() + static_cast<std::ptrdiff_t>(buffered_bytes_),
+        buffer_.begin() + 56,
+        zero_byte
+    );
     store_be_u64(buffer_.data() + 56U, bit_length);
     transform(buffer_.data());
 
