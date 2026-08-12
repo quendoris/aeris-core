@@ -56,6 +56,7 @@ enum class SourceError : std::uint8_t {
     unavailable_snapshot,
     malformed_source,
     provenance_incomplete,
+    content_hash_mismatch,
     normalization_failed,
 };
 

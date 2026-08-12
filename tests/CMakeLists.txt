@@ -21,6 +21,7 @@ aeris_add_core_test(aeris_test_ring_projection_budget test_ring_projection_budge
 aeris_add_core_test(aeris_test_source_adapter test_source_adapter.cpp source_adapter_contract)
 aeris_add_core_test(aeris_test_shapefile test_shapefile.cpp shapefile_reader)
 aeris_add_core_test(aeris_test_sha256 test_sha256.cpp sha256)
+aeris_add_core_test(aeris_test_natural_earth test_natural_earth.cpp natural_earth_adapter)
 aeris_add_core_test(aeris_test_globe_view test_globe_view.cpp globe_view)
 
 if(TARGET aeris_diagnostic_svg)
