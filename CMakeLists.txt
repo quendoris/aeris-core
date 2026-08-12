@@ -45,6 +45,7 @@ add_library(aeris_core STATIC
     src/projection/wgs84.cpp
     src/source/adapter.cpp
     src/source/shapefile.cpp
+    src/util/sha256.cpp
     src/view/globe.cpp
 )
 
@@ -65,9 +66,7 @@ set_target_properties(aeris_core PROPERTIES
 aeris_enable_warnings(aeris_core)
 
 if(AERIS_BUILD_TOOLS)
-    add_executable(aeris_diagnostic_svg
-        tools/diagnostic_svg.cpp
-    )
+    add_executable(aeris_diagnostic_svg tools/diagnostic_svg.cpp)
     target_link_libraries(aeris_diagnostic_svg PRIVATE AERIS::core)
     target_compile_features(aeris_diagnostic_svg PRIVATE cxx_std_17)
     set_target_properties(aeris_diagnostic_svg PROPERTIES CXX_EXTENSIONS OFF)
