@@ -35,6 +35,7 @@ endfunction()
 
 add_library(aeris_core STATIC
     src/geo/wgs84.cpp
+    src/projection/primitives.cpp
 )
 
 add_library(AERIS::core ALIAS aeris_core)

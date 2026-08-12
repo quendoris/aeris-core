@@ -20,6 +20,8 @@ enum class MathError {
     non_finite_input,
     latitude_out_of_range,
     numerical_domain_error,
+    non_convergence,
+    indeterminate_coordinate,
 };
 
 struct ScalarResult final {
@@ -36,5 +38,6 @@ struct ScalarResult final {
 [[nodiscard]] double authalic_q_pole() noexcept;
 [[nodiscard]] double authalic_radius_m() noexcept;
 [[nodiscard]] ScalarResult authalic_latitude(double geodetic_latitude_rad) noexcept;
+[[nodiscard]] ScalarResult geodetic_latitude_from_authalic(double authalic_latitude_rad) noexcept;
 
 }  // namespace aeris::geo

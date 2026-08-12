@@ -128,6 +128,30 @@ void test_monotonicity() {
     }
 }
 
+void test_authalic_inverse_round_trip() {
+    for (int i = -899; i <= 899; ++i) {
+        const double phi = static_cast<double>(i) * aeris::geo::kPi / 1800.0;
+        const auto beta = aeris::geo::authalic_latitude(phi);
+        expect_true("authalic forward for inverse round-trip succeeds", beta.ok());
+        if (!beta.ok()) {
+            continue;
+        }
+
+        const auto recovered = aeris::geo::geodetic_latitude_from_authalic(beta.value);
+        expect_true("authalic inverse succeeds", recovered.ok());
+        if (recovered.ok()) {
+            expect_near("authalic inverse round-trip", recovered.value, phi, 2e-14);
+        }
+    }
+
+    const auto north = aeris::geo::geodetic_latitude_from_authalic(aeris::geo::kHalfPi);
+    const auto south = aeris::geo::geodetic_latitude_from_authalic(-aeris::geo::kHalfPi);
+    expect_true("inverse north pole succeeds", north.ok());
+    expect_true("inverse south pole succeeds", south.ok());
+    expect_near("inverse north pole preserved", north.value, aeris::geo::kHalfPi, 0.0);
+    expect_near("inverse south pole preserved", south.value, -aeris::geo::kHalfPi, 0.0);
+}
+
 void test_invalid_inputs_fail_closed() {
     const auto nan = aeris::geo::authalic_latitude(std::numeric_limits<double>::quiet_NaN());
     expect_true("NaN rejected", nan.error == aeris::geo::MathError::non_finite_input);
@@ -150,6 +174,7 @@ int main() {
     test_authalic_latitude_reference_points();
     test_symmetry_and_poles();
     test_monotonicity();
+    test_authalic_inverse_round_trip();
     test_invalid_inputs_fail_closed();
 
     if (failures != 0) {
