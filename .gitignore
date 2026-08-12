@@ -1,0 +1,8 @@
+# SPDX-FileCopyrightText: 2026 quendoris
+# SPDX-License-Identifier: AGPL-3.0-only
+
+/build/
+/build-*/
+/out/
+CMakeUserPresets.json
+*.aeris.session
