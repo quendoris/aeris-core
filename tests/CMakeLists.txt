@@ -76,6 +76,15 @@ set_target_properties(aeris_test_ring_projection_budget PROPERTIES CXX_EXTENSION
 aeris_enable_warnings(aeris_test_ring_projection_budget)
 add_test(NAME ring_projection_budget COMMAND aeris_test_ring_projection_budget)
 
+add_executable(aeris_test_source_adapter
+    test_source_adapter.cpp
+)
+target_link_libraries(aeris_test_source_adapter PRIVATE AERIS::core)
+target_compile_features(aeris_test_source_adapter PRIVATE cxx_std_17)
+set_target_properties(aeris_test_source_adapter PROPERTIES CXX_EXTENSIONS OFF)
+aeris_enable_warnings(aeris_test_source_adapter)
+add_test(NAME source_adapter_contract COMMAND aeris_test_source_adapter)
+
 add_executable(aeris_test_globe_view
     test_globe_view.cpp
 )
