@@ -37,9 +37,11 @@ endfunction()
 add_library(aeris_core STATIC
     src/geo/rotation.cpp
     src/geo/wgs84.cpp
+    src/geometry/geographic.cpp
     src/geometry/planar.cpp
     src/projection/primitives.cpp
     src/projection/subdivide.cpp
+    src/projection/wgs84.cpp
     src/view/globe.cpp
 )
 
