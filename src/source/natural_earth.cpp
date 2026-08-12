@@ -54,6 +54,25 @@ constexpr const char* kProjectionResource = "crs.prj";
     return has_geographic && has_wgs84;
 }
 
+[[nodiscard]] std::string shapefile_failure_diagnostic(
+    const ShapefilePolygonResult& parsed
+) {
+    std::string diagnostic = "Natural Earth Polygon Shapefile failed strict decoding/canonicalization";
+    if (parsed.failed_record_number != 0U) {
+        diagnostic += " at record " + std::to_string(parsed.failed_record_number);
+    }
+    diagnostic += " [shapefile_error=" + std::to_string(static_cast<unsigned>(parsed.error));
+    if (parsed.geographic_error != geometry::GeographicError::none) {
+        diagnostic += ", geographic_error=" +
+            std::to_string(static_cast<unsigned>(parsed.geographic_error));
+    }
+    diagnostic += ']';
+    if (!parsed.diagnostic.empty()) {
+        diagnostic += ": " + parsed.diagnostic;
+    }
+    return diagnostic;
+}
+
 [[nodiscard]] Result failure(const SourceError error, std::string diagnostic) {
     Result result{};
     result.error = error;
@@ -109,7 +128,10 @@ Result NaturalEarthLand110mAdapter::load(
 
     const ShapefilePolygonResult parsed = read_polygon_shapefile(*shp_path);
     if (!parsed.ok()) {
-        return failure(SourceError::normalization_failed, "Natural Earth Polygon Shapefile failed strict decoding/canonicalization");
+        return failure(
+            SourceError::normalization_failed,
+            shapefile_failure_diagnostic(parsed)
+        );
     }
 
     Result result{};
