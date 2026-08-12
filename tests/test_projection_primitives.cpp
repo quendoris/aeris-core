@@ -33,6 +33,37 @@ void expect_near(
     }
 }
 
+template <typename Projector>
+double numerical_jacobian(
+    Projector projector,
+    const double longitude,
+    const double latitude,
+    const double radius
+) {
+    constexpr double h = 1e-5;
+
+    const auto lambda_plus = projector(longitude + h, latitude, radius);
+    const auto lambda_minus = projector(longitude - h, latitude, radius);
+    const auto latitude_plus = projector(longitude, latitude + h, radius);
+    const auto latitude_minus = projector(longitude, latitude - h, radius);
+
+    expect_true("Jacobian lambda+ projection succeeds", lambda_plus.ok());
+    expect_true("Jacobian lambda- projection succeeds", lambda_minus.ok());
+    expect_true("Jacobian beta+ projection succeeds", latitude_plus.ok());
+    expect_true("Jacobian beta- projection succeeds", latitude_minus.ok());
+    if (!lambda_plus.ok() || !lambda_minus.ok() ||
+        !latitude_plus.ok() || !latitude_minus.ok()) {
+        return std::numeric_limits<double>::quiet_NaN();
+    }
+
+    const double dx_dlambda = (lambda_plus.value.x - lambda_minus.value.x) / (2.0 * h);
+    const double dy_dlambda = (lambda_plus.value.y - lambda_minus.value.y) / (2.0 * h);
+    const double dx_dbeta = (latitude_plus.value.x - latitude_minus.value.x) / (2.0 * h);
+    const double dy_dbeta = (latitude_plus.value.y - latitude_minus.value.y) / (2.0 * h);
+
+    return std::abs(dx_dlambda * dy_dbeta - dx_dbeta * dy_dlambda);
+}
+
 void test_sinusoidal_origin_and_round_trip() {
     const double radius = aeris::geo::authalic_radius_m();
     const auto origin = aeris::projection::sinusoidal_forward(0.0, 0.0, radius);
@@ -106,6 +137,28 @@ void test_mollweide_round_trip() {
     }
 }
 
+void test_local_area_jacobians() {
+    using aeris::projection::mollweide_forward;
+    using aeris::projection::sinusoidal_forward;
+
+    const double radius = aeris::geo::authalic_radius_m();
+    constexpr int latitudes_deg[] = {-80, -60, -30, 0, 30, 60, 80};
+    constexpr double longitudes[] = {-2.1, -0.73, 0.0, 0.73, 2.1};
+
+    for (const int latitude_deg : latitudes_deg) {
+        const double beta = static_cast<double>(latitude_deg) * aeris::geo::kPi / 180.0;
+        const double expected = radius * radius * std::cos(beta);
+
+        for (const double lambda : longitudes) {
+            const double sinusoidal = numerical_jacobian(sinusoidal_forward, lambda, beta, radius);
+            const double mollweide = numerical_jacobian(mollweide_forward, lambda, beta, radius);
+
+            expect_near("sinusoidal equal-area Jacobian ratio", sinusoidal / expected, 1.0, 5e-10);
+            expect_near("Mollweide equal-area Jacobian ratio", mollweide / expected, 1.0, 5e-10);
+        }
+    }
+}
+
 void test_pole_inverse_is_explicitly_indeterminate() {
     const double radius = aeris::geo::authalic_radius_m();
 
@@ -134,6 +187,16 @@ void test_invalid_input_rejection() {
         aeris::projection::mollweide_forward(0.0, aeris::geo::kHalfPi + 1e-6).error ==
             aeris::geo::MathError::latitude_out_of_range
     );
+    expect_true(
+        "sinusoidal negative radius rejected as numerical domain",
+        aeris::projection::sinusoidal_forward(0.0, 0.0, -1.0).error ==
+            aeris::geo::MathError::numerical_domain_error
+    );
+    expect_true(
+        "Mollweide zero radius rejected as numerical domain",
+        aeris::projection::mollweide_forward(0.0, 0.0, 0.0).error ==
+            aeris::geo::MathError::numerical_domain_error
+    );
 }
 
 }  // namespace
@@ -142,6 +205,7 @@ int main() {
     test_sinusoidal_origin_and_round_trip();
     test_mollweide_auxiliary_equation();
     test_mollweide_round_trip();
+    test_local_area_jacobians();
     test_pole_inverse_is_explicitly_indeterminate();
     test_invalid_input_rejection();
 

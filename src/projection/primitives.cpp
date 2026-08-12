@@ -15,16 +15,6 @@ constexpr double kSqrt2 = 1.414213562373095048801688724209698079;
     return std::isfinite(radius_m) && radius_m > 0.0;
 }
 
-[[nodiscard]] bool valid_spherical_input(
-    const double longitude_rad,
-    const double latitude_rad,
-    const double radius_m
-) noexcept {
-    return std::isfinite(longitude_rad) && std::isfinite(latitude_rad) &&
-           latitude_rad >= -geo::kHalfPi && latitude_rad <= geo::kHalfPi &&
-           valid_radius(radius_m);
-}
-
 [[nodiscard]] double clamp_roundoff_unit(const double value, bool& valid) noexcept {
     constexpr double slack = 32.0 * std::numeric_limits<double>::epsilon();
     if (value > 1.0) {
@@ -41,6 +31,23 @@ constexpr double kSqrt2 = 1.414213562373095048801688724209698079;
     return value;
 }
 
+[[nodiscard]] geo::MathError validate_forward_input(
+    const double longitude_rad,
+    const double latitude_rad,
+    const double radius_m
+) noexcept {
+    if (!std::isfinite(longitude_rad) || !std::isfinite(latitude_rad) || !std::isfinite(radius_m)) {
+        return geo::MathError::non_finite_input;
+    }
+    if (latitude_rad < -geo::kHalfPi || latitude_rad > geo::kHalfPi) {
+        return geo::MathError::latitude_out_of_range;
+    }
+    if (!valid_radius(radius_m)) {
+        return geo::MathError::numerical_domain_error;
+    }
+    return geo::MathError::none;
+}
+
 }  // namespace
 
 PlanarResult sinusoidal_forward(
@@ -48,11 +55,10 @@ PlanarResult sinusoidal_forward(
     const double authalic_latitude_rad,
     const double radius_m
 ) noexcept {
-    if (!valid_spherical_input(longitude_delta_rad, authalic_latitude_rad, radius_m)) {
-        return {{}, !std::isfinite(longitude_delta_rad) || !std::isfinite(authalic_latitude_rad) ||
-                        !std::isfinite(radius_m)
-                    ? geo::MathError::non_finite_input
-                    : geo::MathError::latitude_out_of_range};
+    const geo::MathError input_error =
+        validate_forward_input(longitude_delta_rad, authalic_latitude_rad, radius_m);
+    if (input_error != geo::MathError::none) {
+        return {{}, input_error};
     }
 
     return {{
@@ -173,11 +179,10 @@ PlanarResult mollweide_forward(
     const double authalic_latitude_rad,
     const double radius_m
 ) noexcept {
-    if (!valid_spherical_input(longitude_delta_rad, authalic_latitude_rad, radius_m)) {
-        return {{}, !std::isfinite(longitude_delta_rad) || !std::isfinite(authalic_latitude_rad) ||
-                        !std::isfinite(radius_m)
-                    ? geo::MathError::non_finite_input
-                    : geo::MathError::latitude_out_of_range};
+    const geo::MathError input_error =
+        validate_forward_input(longitude_delta_rad, authalic_latitude_rad, radius_m);
+    if (input_error != geo::MathError::none) {
+        return {{}, input_error};
     }
 
     const auto theta_result = mollweide_auxiliary_angle(authalic_latitude_rad);
