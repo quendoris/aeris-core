@@ -35,6 +35,10 @@ namespace {
     return value;
 }
 
+[[nodiscard]] double midpoint(const double lower, const double upper) noexcept {
+    return lower + (upper - lower) * 0.5;
+}
+
 }  // namespace
 
 double wgs84_eccentricity() noexcept {
@@ -121,78 +125,41 @@ ScalarResult geodetic_latitude_from_authalic(const double authalic_latitude_rad)
 
     const double q_pole = authalic_q_pole();
     const double target_q = q_pole * std::sin(authalic_latitude_rad);
-    double lower = -kHalfPi;
-    double upper = kHalfPi;
-    double phi = authalic_latitude_rad;
-
-    constexpr int max_iterations = 40;
-    constexpr double angular_tolerance = 8.0 * std::numeric_limits<double>::epsilon();
-    constexpr double derivative_floor = 64.0 * std::numeric_limits<double>::epsilon();
-
-    for (int iteration = 0; iteration < max_iterations; ++iteration) {
-        const double q = authalic_q(phi);
-        if (!std::isfinite(q)) {
-            return {0.0, MathError::numerical_domain_error};
-        }
-
-        const double residual = q - target_q;
-        if (residual < 0.0) {
-            lower = phi;
-        } else if (residual > 0.0) {
-            upper = phi;
-        } else {
-            return {phi, MathError::none};
-        }
-
-        if ((upper - lower) <= angular_tolerance) {
-            return {0.5 * (lower + upper), MathError::none};
-        }
-
-        const double sin_phi = std::sin(phi);
-        const double cos_phi = std::cos(phi);
-        const double denominator = 1.0 - Wgs84::eccentricity_squared * sin_phi * sin_phi;
-        const double derivative =
-            2.0 * (1.0 - Wgs84::eccentricity_squared) * cos_phi /
-            (denominator * denominator);
-
-        double candidate = 0.5 * (lower + upper);
-        if (std::isfinite(derivative) && std::abs(derivative) > derivative_floor) {
-            const double correction = residual / derivative;
-            if (std::abs(correction) <= angular_tolerance) {
-                return {phi - correction, MathError::none};
-            }
-
-            const double newton = phi - correction;
-            if (std::isfinite(newton) && newton > lower && newton < upper) {
-                candidate = newton;
-            }
-        }
-
-        if (candidate == phi) {
-            break;
-        }
-        phi = candidate;
+    if (!std::isfinite(q_pole) || q_pole <= 0.0 || !std::isfinite(target_q)) {
+        return {0.0, MathError::numerical_domain_error};
     }
 
-    constexpr int fallback_iterations = 80;
-    for (int iteration = 0; iteration < fallback_iterations; ++iteration) {
-        const double midpoint = 0.5 * (lower + upper);
-        if (midpoint == lower || midpoint == upper || (upper - lower) <= angular_tolerance) {
-            return {midpoint, MathError::none};
+    // Coordinate-bounded bisection is deliberately used for the reference inverse.
+    // It is slower than Newton iteration, but its stopping condition is expressed
+    // directly in the recovered latitude rather than in a libm-dependent residual.
+    // This keeps the CPU reference path portable across standard-library implementations.
+    double lower = -kHalfPi;
+    double upper = kHalfPi;
+
+    constexpr int max_iterations = 80;
+    for (int iteration = 0; iteration < max_iterations; ++iteration) {
+        const double candidate = midpoint(lower, upper);
+        if (candidate == lower || candidate == upper) {
+            return {candidate, MathError::none};
         }
 
-        const double residual = authalic_q(midpoint) - target_q;
-        if (!std::isfinite(residual)) {
+        const double q_candidate = authalic_q(candidate);
+        if (!std::isfinite(q_candidate)) {
             return {0.0, MathError::numerical_domain_error};
         }
 
-        if (residual < 0.0) {
-            lower = midpoint;
-        } else if (residual > 0.0) {
-            upper = midpoint;
+        if (q_candidate < target_q) {
+            lower = candidate;
+        } else if (q_candidate > target_q) {
+            upper = candidate;
         } else {
-            return {midpoint, MathError::none};
+            return {candidate, MathError::none};
         }
+    }
+
+    const double candidate = midpoint(lower, upper);
+    if (candidate == lower || candidate == upper) {
+        return {candidate, MathError::none};
     }
 
     return {0.0, MathError::non_convergence};
