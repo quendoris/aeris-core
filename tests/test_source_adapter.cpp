@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <string_view>
+#include <utility>
 
 namespace {
 
@@ -47,12 +48,15 @@ aeris::source::Result valid_result() {
     aeris::source::Feature feature{};
     feature.stable_id = "land-1";
     feature.source_id = "source-land-1";
-    feature.rings.push_back(aeris::geometry::LinearRing{{
+    aeris::source::FeatureRing ring{};
+    ring.geometry = aeris::geometry::LinearRing{{
         {-0.1, -0.1},
         {0.1, -0.1},
         {0.1, 0.1},
         {-0.1, 0.1},
-    }});
+    }};
+    ring.role = aeris::source::RingRole::exterior;
+    feature.rings.push_back(std::move(ring));
     result.features.push_back(std::move(feature));
     return result;
 }

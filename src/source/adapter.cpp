@@ -45,8 +45,8 @@ SourceError validate_result(
         if (feature.stable_id.empty() || feature.source_id.empty() || feature.rings.empty()) {
             return SourceError::malformed_source;
         }
-        for (const geometry::LinearRing& ring : feature.rings) {
-            if (ring.vertices.size() < 3U) {
+        for (const FeatureRing& ring : feature.rings) {
+            if (ring.geometry.vertices.size() < 3U) {
                 return SourceError::malformed_source;
             }
         }

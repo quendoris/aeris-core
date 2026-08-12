@@ -44,6 +44,7 @@ add_library(aeris_core STATIC
     src/projection/subdivide.cpp
     src/projection/wgs84.cpp
     src/source/adapter.cpp
+    src/source/shapefile.cpp
     src/view/globe.cpp
 )
 

@@ -5,7 +5,6 @@
 
 #include "aeris/geometry/geographic.hpp"
 
-#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <string_view>
@@ -44,6 +43,11 @@ enum class TemporalClass : std::uint8_t {
     fast_change,
 };
 
+enum class RingRole : std::uint8_t {
+    exterior = 0U,
+    interior,
+};
+
 enum class SourceError : std::uint8_t {
     none = 0U,
     invalid_request,
@@ -59,6 +63,7 @@ struct Provenance final {
     std::string provider;
     std::string dataset;
     std::string snapshot;
+    std::string dataset_version;
     std::string source_uri;
     std::string license_id;
     std::string content_sha256;
@@ -75,10 +80,15 @@ struct AdapterDescriptor final {
     TemporalClass temporal_class = TemporalClass::periodic;
 };
 
+struct FeatureRing final {
+    geometry::LinearRing geometry;
+    RingRole role = RingRole::exterior;
+};
+
 struct Feature final {
     std::string stable_id;
     std::string source_id;
-    std::vector<geometry::LinearRing> rings;
+    std::vector<FeatureRing> rings;
 };
 
 struct Request final {
