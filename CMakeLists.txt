@@ -40,6 +40,7 @@ add_library(aeris_core STATIC
     src/geometry/planar.cpp
     src/projection/primitives.cpp
     src/projection/subdivide.cpp
+    src/view/globe.cpp
 )
 
 add_library(AERIS::core ALIAS aeris_core)

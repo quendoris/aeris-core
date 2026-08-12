@@ -49,6 +49,15 @@ set_target_properties(aeris_test_subdivision PROPERTIES CXX_EXTENSIONS OFF)
 aeris_enable_warnings(aeris_test_subdivision)
 add_test(NAME adaptive_subdivision COMMAND aeris_test_subdivision)
 
+add_executable(aeris_test_globe_view
+    test_globe_view.cpp
+)
+target_link_libraries(aeris_test_globe_view PRIVATE AERIS::core)
+target_compile_features(aeris_test_globe_view PRIVATE cxx_std_17)
+set_target_properties(aeris_test_globe_view PROPERTIES CXX_EXTENSIONS OFF)
+aeris_enable_warnings(aeris_test_globe_view)
+add_test(NAME globe_view COMMAND aeris_test_globe_view)
+
 if(TARGET aeris_diagnostic_svg)
     add_test(
         NAME diagnostic_svg_smoke

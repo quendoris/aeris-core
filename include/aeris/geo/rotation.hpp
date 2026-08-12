@@ -6,6 +6,7 @@
 #include "aeris/geo/wgs84.hpp"
 
 #include <array>
+#include <cstddef>
 
 namespace aeris::geo {
 
@@ -47,6 +48,7 @@ struct LonLatResult final {
 [[nodiscard]] Mat3 transpose(const Mat3& matrix) noexcept;
 [[nodiscard]] Mat3 multiply(const Mat3& left, const Mat3& right) noexcept;
 [[nodiscard]] Vec3 apply(const Mat3& matrix, Vec3 vector) noexcept;
+[[nodiscard]] bool is_rotation_matrix(const Mat3& matrix, double tolerance = 1e-12) noexcept;
 
 [[nodiscard]] Mat3 rotation_x(double angle_rad) noexcept;
 [[nodiscard]] Mat3 rotation_y(double angle_rad) noexcept;

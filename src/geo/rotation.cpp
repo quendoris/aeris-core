@@ -17,6 +17,15 @@ namespace {
     return value;
 }
 
+[[nodiscard]] bool finite_matrix(const Mat3& matrix) noexcept {
+    for (const double value : matrix.m) {
+        if (!std::isfinite(value)) {
+            return false;
+        }
+    }
+    return true;
+}
+
 }  // namespace
 
 double dot(const Vec3 a, const Vec3 b) noexcept {
@@ -68,6 +77,24 @@ Vec3 apply(const Mat3& matrix, const Vec3 vector) noexcept {
         matrix(1, 0) * vector.x + matrix(1, 1) * vector.y + matrix(1, 2) * vector.z,
         matrix(2, 0) * vector.x + matrix(2, 1) * vector.y + matrix(2, 2) * vector.z,
     };
+}
+
+bool is_rotation_matrix(const Mat3& matrix, const double tolerance) noexcept {
+    if (!finite_matrix(matrix) || !std::isfinite(tolerance) || tolerance <= 0.0) {
+        return false;
+    }
+
+    const Mat3 product = multiply(matrix, transpose(matrix));
+    for (int row = 0; row < 3; ++row) {
+        for (int column = 0; column < 3; ++column) {
+            const double expected = row == column ? 1.0 : 0.0;
+            if (std::abs(product(row, column) - expected) > tolerance) {
+                return false;
+            }
+        }
+    }
+
+    return std::abs(determinant(matrix) - 1.0) <= tolerance;
 }
 
 Mat3 rotation_x(const double angle_rad) noexcept {

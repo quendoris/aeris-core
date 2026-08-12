@@ -1,9 +1,11 @@
 // SPDX-FileCopyrightText: 2026 quendoris
 // SPDX-License-Identifier: AGPL-3.0-only
 
+#include "aeris/geo/rotation.hpp"
 #include "aeris/geo/wgs84.hpp"
 #include "aeris/projection/primitives.hpp"
 #include "aeris/projection/subdivide.hpp"
+#include "aeris/view/globe.hpp"
 
 #include <cmath>
 #include <cstdlib>
@@ -128,6 +130,140 @@ bool draw_graticule(
     return true;
 }
 
+struct GlobeScreenPoint final {
+    double x = 0.0;
+    double y = 0.0;
+    double depth = 0.0;
+    bool visible = false;
+};
+
+GlobeScreenPoint globe_screen(
+    const double longitude,
+    const double latitude,
+    const aeris::geo::Mat3& camera,
+    const Panel panel,
+    const double radius
+) {
+    const auto projected = aeris::view::orthographic_globe_point(
+        longitude,
+        latitude,
+        camera,
+        radius
+    );
+    if (!projected.ok()) {
+        return {};
+    }
+
+    return {
+        panel.center_x + (projected.value.x / radius) * panel.scale,
+        panel.center_y - (projected.value.y / radius) * panel.scale,
+        projected.value.depth,
+        projected.value.visible,
+    };
+}
+
+void write_globe_curve(
+    std::ofstream& output,
+    const bool constant_longitude,
+    const double fixed_rad,
+    const aeris::geo::Mat3& camera,
+    const Panel panel,
+    const double radius,
+    const std::string& css_class
+) {
+    constexpr int samples = 720;
+    constexpr double deg = aeris::geo::kPi / 180.0;
+    const double variable_start = constant_longitude ? -89.5 * deg : -aeris::geo::kPi;
+    const double variable_end = constant_longitude ? 89.5 * deg : aeris::geo::kPi;
+
+    bool path_open = false;
+    GlobeScreenPoint previous{};
+    bool have_previous = false;
+
+    output << std::fixed << std::setprecision(3);
+    for (int index = 0; index <= samples; ++index) {
+        const double t = static_cast<double>(index) / static_cast<double>(samples);
+        const double variable = variable_start + t * (variable_end - variable_start);
+        const double longitude = constant_longitude ? fixed_rad : variable;
+        const double latitude = constant_longitude ? variable : fixed_rad;
+        const GlobeScreenPoint current = globe_screen(longitude, latitude, camera, panel, radius);
+
+        if (have_previous && previous.visible != current.visible) {
+            const double denominator = previous.depth - current.depth;
+            if (denominator != 0.0) {
+                const double alpha = previous.depth / denominator;
+                const double boundary_x = previous.x + alpha * (current.x - previous.x);
+                const double boundary_y = previous.y + alpha * (current.y - previous.y);
+                if (previous.visible && path_open) {
+                    output << 'L' << boundary_x << ',' << boundary_y << ' ';
+                    path_open = false;
+                } else if (current.visible) {
+                    output << "<path class=\"" << css_class << "\" d=\"M"
+                           << boundary_x << ',' << boundary_y << ' ';
+                    path_open = true;
+                }
+            }
+        }
+
+        if (current.visible) {
+            if (!path_open) {
+                output << "<path class=\"" << css_class << "\" d=\"M"
+                       << current.x << ',' << current.y << ' ';
+                path_open = true;
+            } else {
+                output << 'L' << current.x << ',' << current.y << ' ';
+            }
+        }
+
+        if (path_open && (!current.visible || index == samples)) {
+            output << "\"/>\n";
+            path_open = false;
+        }
+
+        previous = current;
+        have_previous = true;
+    }
+}
+
+void draw_globe(
+    std::ofstream& output,
+    const Panel panel,
+    const double radius
+) {
+    constexpr double deg = aeris::geo::kPi / 180.0;
+    const auto camera = aeris::geo::multiply(
+        aeris::geo::rotation_y(-18.0 * deg),
+        aeris::geo::rotation_z(28.0 * deg)
+    );
+
+    output << "<circle class=\"outline\" cx=\"" << panel.center_x
+           << "\" cy=\"" << panel.center_y
+           << "\" r=\"" << panel.scale << "\"/>\n";
+
+    for (int longitude_deg = -150; longitude_deg <= 180; longitude_deg += 30) {
+        write_globe_curve(
+            output,
+            true,
+            static_cast<double>(longitude_deg) * deg,
+            camera,
+            panel,
+            radius,
+            longitude_deg == 0 ? "axis" : "grid"
+        );
+    }
+    for (int latitude_deg = -60; latitude_deg <= 60; latitude_deg += 30) {
+        write_globe_curve(
+            output,
+            false,
+            static_cast<double>(latitude_deg) * deg,
+            camera,
+            panel,
+            radius,
+            latitude_deg == 0 ? "axis" : "grid"
+        );
+    }
+}
+
 }  // namespace
 
 int main(const int argc, char** const argv) {
@@ -139,26 +275,30 @@ int main(const int argc, char** const argv) {
     }
 
     const double radius = aeris::geo::authalic_radius_m();
-    const Panel sinusoidal{400.0, 390.0, 112.0};
-    const Panel mollweide{1200.0, 390.0, 112.0};
+    const Panel globe{300.0, 350.0, 220.0};
+    const Panel sinusoidal{900.0, 350.0, 95.0};
+    const Panel mollweide{1500.0, 350.0, 95.0};
 
-    output << "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"1600\" height=\"780\" "
-              "viewBox=\"0 0 1600 780\" role=\"img\" "
-              "aria-label=\"AERIS diagnostic equal-area projection graticules\">\n";
+    output << "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"1800\" height=\"700\" "
+              "viewBox=\"0 0 1800 700\" role=\"img\" "
+              "aria-label=\"AERIS diagnostic globe and equal-area projection graticules\">\n";
     output << "<style>\n"
               "  .background{fill:#f7f7f7;}\n"
               "  .grid{fill:none;stroke:#777;stroke-width:1;vector-effect:non-scaling-stroke;}\n"
               "  .axis{fill:none;stroke:#111;stroke-width:1.8;vector-effect:non-scaling-stroke;}\n"
+              "  .outline{fill:none;stroke:#111;stroke-width:2.2;}\n"
               "  .title{font:24px sans-serif;fill:#111;}\n"
               "  .note{font:15px sans-serif;fill:#555;}\n"
               "</style>\n";
-    output << "<rect class=\"background\" width=\"1600\" height=\"780\"/>\n";
-    output << "<text class=\"title\" x=\"400\" y=\"48\" text-anchor=\"middle\">Sinusoidal</text>\n";
-    output << "<text class=\"title\" x=\"1200\" y=\"48\" text-anchor=\"middle\">Mollweide</text>\n";
-    output << "<text class=\"note\" x=\"800\" y=\"752\" text-anchor=\"middle\">"
-              "AERIS CPU reference core — WGS84 authalic radius, adaptive projected curves"
+    output << "<rect class=\"background\" width=\"1800\" height=\"700\"/>\n";
+    output << "<text class=\"title\" x=\"300\" y=\"48\" text-anchor=\"middle\">Authalic globe</text>\n";
+    output << "<text class=\"title\" x=\"900\" y=\"48\" text-anchor=\"middle\">Sinusoidal</text>\n";
+    output << "<text class=\"title\" x=\"1500\" y=\"48\" text-anchor=\"middle\">Mollweide</text>\n";
+    output << "<text class=\"note\" x=\"900\" y=\"675\" text-anchor=\"middle\">"
+              "AERIS CPU reference core — one authalic sphere, multiple verified representations"
               "</text>\n";
 
+    draw_globe(output, globe, radius);
     if (!draw_graticule(output, ProjectionKind::sinusoidal, sinusoidal, radius) ||
         !draw_graticule(output, ProjectionKind::mollweide, mollweide, radius)) {
         return EXIT_FAILURE;
