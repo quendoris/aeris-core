@@ -1,0 +1,4 @@
+# logical_name	relative_path	sha256	size_bytes
+geometry.shp	ne_110m_land.shp	8689e6932b8e370e2ca4587cf3ba21e460b1235db37b6ed3c172c35b4a6088de	89504
+crs.prj	ne_110m_land.prj	3259f0e55290a82b1350646f604e8a7ee1e2136c0320a40fad838ab40819fff8	147
+dataset.version	ne_110m_land.VERSION.txt	3b10b6ad566eadbcacadb33c591f1ec629593d6adf47442e56e0f61996829ef7	6

@@ -51,6 +51,12 @@ if(AERIS_BUILD_TOOLS)
     target_compile_features(aeris_diagnostic_svg PRIVATE cxx_std_17)
     set_target_properties(aeris_diagnostic_svg PROPERTIES CXX_EXTENSIONS OFF)
     aeris_enable_warnings(aeris_diagnostic_svg)
+
+    add_executable(aeris_real_world_probe tools/real_world_probe.cpp)
+    target_link_libraries(aeris_real_world_probe PRIVATE AERIS::core)
+    target_compile_features(aeris_real_world_probe PRIVATE cxx_std_17)
+    set_target_properties(aeris_real_world_probe PROPERTIES CXX_EXTENSIONS OFF)
+    aeris_enable_warnings(aeris_real_world_probe)
 endif()
 
 if(AERIS_BUILD_TESTS)

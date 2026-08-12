@@ -8,14 +8,17 @@ on:
     branches: [main]
     paths:
       - .github/workflows/source-compatibility.yml
+      - compat/natural-earth/**
+      - tools/real_world_probe.cpp
+      - CMakeLists.txt
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  natural-earth-110m-land-probe:
-    name: Natural Earth v5.1.2 / byte identity probe
+  natural-earth-110m-land:
+    name: Natural Earth v5.1.2 / verified real-world proof
     runs-on: ubuntu-latest
 
     steps:
@@ -28,20 +31,39 @@ jobs:
           set -euo pipefail
           root="$RUNNER_TEMP/natural-earth-v5.1.2"
           mkdir -p "$root"
-          base="https://raw.githubusercontent.com/nvkelso/natural-earth-vector/v5.1.2/110m_physical"
+          base="https://raw.githubusercontent.com/nvkelso/natural-earth-vector/f1890d9f152c896d250a77557a5751a93d494776/110m_physical"
           for file in ne_110m_land.shp ne_110m_land.prj ne_110m_land.VERSION.txt; do
             curl --proto '=https' --tlsv1.2 --fail --location --retry 3 \
               --output "$root/$file" "$base/$file"
           done
 
-      - name: Print byte identities
+      - name: Build integration probe
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake -S . -B build-compat \
+            -DAERIS_BUILD_TESTS=OFF \
+            -DAERIS_BUILD_TOOLS=ON \
+            -DAERIS_WARNINGS_AS_ERRORS=ON \
+            -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-compat --target aeris_real_world_probe --parallel 2
+
+      - name: Verify, normalize, project, and render
         shell: bash
         run: |
           set -euo pipefail
           root="$RUNNER_TEMP/natural-earth-v5.1.2"
-          echo '--- SHA-256 ---'
-          sha256sum "$root/ne_110m_land.shp" "$root/ne_110m_land.prj" "$root/ne_110m_land.VERSION.txt"
-          echo '--- byte sizes ---'
-          wc -c "$root/ne_110m_land.shp" "$root/ne_110m_land.prj" "$root/ne_110m_land.VERSION.txt"
-          echo '--- VERSION.txt ---'
-          cat "$root/ne_110m_land.VERSION.txt"
+          retrieved_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          ./build-compat/aeris_real_world_probe \
+            "$root" \
+            compat/natural-earth/ne_110m_land-v5.1.2 \
+            "$RUNNER_TEMP/aeris-natural-earth-v5.1.2.svg" \
+            "$retrieved_at"
+
+      - name: Upload diagnostic SVG
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: aeris-natural-earth-v5.1.2
+          path: ${{ runner.temp }}/aeris-natural-earth-v5.1.2.svg
+          if-no-files-found: error
+          retention-days: 14
