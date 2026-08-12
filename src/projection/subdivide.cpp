@@ -3,12 +3,10 @@
 
 #include "aeris/projection/subdivide.hpp"
 
-#include "aeris/geometry/planar.hpp"
-
 #include <algorithm>
 #include <array>
 #include <cmath>
-#include <limits>
+#include <utility>
 
 namespace aeris::projection {
 namespace {

@@ -6,7 +6,6 @@
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
-#include <limits>
 #include <string_view>
 
 namespace {
@@ -30,14 +29,14 @@ aeris::projection::PlanarResult sample_parabola(const double t, void* const cont
         return {{}, aeris::geo::MathError::numerical_domain_error};
     }
 
-    return {{{t, curve->curvature * t * (1.0 - t)}}, aeris::geo::MathError::none};
+    return {{t, curve->curvature * t * (1.0 - t)}, aeris::geo::MathError::none};
 }
 
 aeris::projection::PlanarResult sample_failure(const double t, void*) noexcept {
     if (t > 0.4 && t < 0.6) {
         return {{}, aeris::geo::MathError::numerical_domain_error};
     }
-    return {{{t, 0.0}}, aeris::geo::MathError::none};
+    return {{t, 0.0}, aeris::geo::MathError::none};
 }
 
 void test_straight_line_is_minimal() {
