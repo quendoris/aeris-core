@@ -209,6 +209,59 @@ struct IntegralResult final {
     );
 }
 
+[[nodiscard]] double wgs84_surface_area_m2() noexcept {
+    const double a = geo::Wgs84::semi_major_axis_m;
+    return 2.0 * geo::kPi * a * a * geo::authalic_q_pole();
+}
+
+[[nodiscard]] bool select_topological_area(
+    const double raw_area_m2,
+    const int longitude_winding,
+    const RingInteriorSide interior_side,
+    double& selected_area_m2,
+    double& topology_roundoff_m2
+) noexcept {
+    const double surface_area = wgs84_surface_area_m2();
+    if (!std::isfinite(surface_area) || surface_area <= 0.0) {
+        return false;
+    }
+
+    const double winding = static_cast<double>(longitude_winding);
+    const double branch_area = raw_area_m2 + winding * (0.5 * surface_area);
+    if (!std::isfinite(branch_area)) {
+        return false;
+    }
+
+    double representative = std::fmod(branch_area, surface_area);
+    if (!std::isfinite(representative)) {
+        return false;
+    }
+
+    if (interior_side == RingInteriorSide::left) {
+        if (representative < 0.0) {
+            representative += surface_area;
+        }
+    } else if (interior_side == RingInteriorSide::right) {
+        if (representative > 0.0) {
+            representative -= surface_area;
+        }
+    } else {
+        return false;
+    }
+
+    if (!std::isfinite(representative)) {
+        return false;
+    }
+
+    selected_area_m2 = representative;
+    topology_roundoff_m2 =
+        16.0 * std::numeric_limits<double>::epsilon() *
+        (std::abs(raw_area_m2) +
+         std::abs(winding) * 0.5 * surface_area +
+         surface_area);
+    return std::isfinite(topology_roundoff_m2);
+}
+
 }  // namespace
 
 LinearRingResult canonicalize_wgs84_linear_ring(
@@ -327,7 +380,8 @@ GeographicAreaResult signed_wgs84_linear_ring_area(
         result.error = GeographicError::invalid_options;
         return result;
     }
-    if (ring.longitude_winding != 0) {
+    if (ring.longitude_winding != 0 &&
+        ring.interior_side == RingInteriorSide::unspecified) {
         result.error = GeographicError::longitude_winding_unsupported;
         return result;
     }
@@ -391,6 +445,28 @@ GeographicAreaResult signed_wgs84_linear_ring_area(
             area_compensation
         ));
         error_sum += contribution_error;
+    }
+
+    if (!std::isfinite(area_sum) || !std::isfinite(error_sum)) {
+        result.error = GeographicError::numerical_domain_error;
+        return result;
+    }
+
+    if (ring.interior_side != RingInteriorSide::unspecified) {
+        double selected_area = 0.0;
+        double topology_roundoff = 0.0;
+        if (!select_topological_area(
+                area_sum,
+                ring.longitude_winding,
+                ring.interior_side,
+                selected_area,
+                topology_roundoff
+            )) {
+            result.error = GeographicError::numerical_domain_error;
+            return result;
+        }
+        area_sum = selected_area;
+        error_sum += topology_roundoff;
     }
 
     if (!std::isfinite(area_sum) || !std::isfinite(error_sum)) {
