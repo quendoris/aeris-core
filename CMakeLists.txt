@@ -6,6 +6,8 @@ project(aeris VERSION 0.1.0 DESCRIPTION "Authalic Equal-area Rendering & Ingesti
 
 option(AERIS_BUILD_TESTS "Build AERIS tests" ON)
 option(AERIS_BUILD_TOOLS "Build AERIS development tools" ON)
+# Keep the GUI opt-in so the reference core never acquires a transitive Qt
+# requirement merely because a frontend exists in the same repository.
 option(AERIS_BUILD_VIEWER "Build the optional Qt Widgets AERIS viewer" OFF)
 option(AERIS_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" OFF)
 
