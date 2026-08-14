@@ -56,15 +56,20 @@ jobs:
           -DAERIS_WARNINGS_AS_ERRORS=ON
           -DCMAKE_BUILD_TYPE=Release
 
-      - name: Build viewer and scene probe
+      - name: Build viewer and probes
         run: >-
           cmake --build build-viewer
-          --target aeris_viewer aeris_viewer_scene_probe
+          --target aeris_viewer aeris_viewer_scene_probe aeris_viewer_controller_probe
           --parallel 2
 
       - name: Build all real viewer scenes
         run: >-
           ./build-viewer/viewer/aeris_viewer_scene_probe
+          --snapshot ${{ runner.temp }}/natural-earth-v5.1.2
+
+      - name: Verify preview/cancel/verified interaction lifecycle
+        run: >-
+          ./build-viewer/viewer/aeris_viewer_controller_probe
           --snapshot ${{ runner.temp }}/natural-earth-v5.1.2
 
       - name: Offscreen startup smoke test
