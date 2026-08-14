@@ -66,7 +66,7 @@ enum class HemisphereCoverage {
 }
 
 [[nodiscard]] double point_tolerance_m(const double radius_m) noexcept {
-    return 128.0 * std::numeric_limits<double>::epsilon() *
+    return 256.0 * std::numeric_limits<double>::epsilon() *
         std::max(1.0, radius_m);
 }
 
@@ -96,9 +96,7 @@ void remove_duplicate_terminal(
     return value;
 }
 
-[[nodiscard]] double limb_angle(
-    const geometry::PlanarPoint point
-) noexcept {
+[[nodiscard]] double limb_angle(const geometry::PlanarPoint point) noexcept {
     return positive_angle(std::atan2(point.y, point.x));
 }
 
@@ -119,7 +117,7 @@ void remove_duplicate_terminal(
 ) noexcept {
     const double radial = std::hypot(point.x, point.y);
     const double tolerance = std::max(
-        1.0,
+        point_tolerance_m(radius_m),
         8.0 * options.curve.horizon_tolerance_m
     );
     return std::isfinite(radial) &&
@@ -127,17 +125,19 @@ void remove_duplicate_terminal(
 }
 
 [[nodiscard]] HemisphereCoverage classify_coverage(
-    const geometry::GeographicAreaResult& area,
-    const double radius_m
+    const geometry::GeographicAreaResult& area
 ) noexcept {
-    const double half_surface_area = 2.0 * geo::kPi * radius_m * radius_m;
+    const double physical_radius_m = geo::authalic_radius_m();
+    const double half_surface_area =
+        2.0 * geo::kPi * physical_radius_m * physical_radius_m;
     const double magnitude = std::abs(area.signed_area_m2);
     const double numerical_floor =
         64.0 * std::numeric_limits<double>::epsilon() *
         std::max({1.0, magnitude, half_surface_area});
     const double uncertainty = area.estimated_abs_error_m2 + numerical_floor;
 
-    if (!std::isfinite(half_surface_area) ||
+    if (!std::isfinite(physical_radius_m) || physical_radius_m <= 0.0 ||
+        !std::isfinite(half_surface_area) ||
         !std::isfinite(magnitude) ||
         !std::isfinite(uncertainty)) {
         return HemisphereCoverage::ambiguous;
@@ -165,6 +165,7 @@ void remove_duplicate_terminal(
 
 [[nodiscard]] bool reserve_arc_segments(
     const double delta_angle,
+    const std::size_t minimum_segments,
     const GlobePolygonOptions& options,
     const double radius_m,
     std::size_t& segment_count,
@@ -184,12 +185,15 @@ void remove_duplicate_terminal(
         return false;
     }
 
-    segment_count = std::max<std::size_t>(
+    segment_count = std::max<std::size_t>({
         1U,
-        static_cast<std::size_t>(raw_count)
-    );
-    if (segment_count > options.max_horizon_arc_segments -
-            std::min(options.max_horizon_arc_segments, result.horizon_arc_segments)) {
+        minimum_segments,
+        static_cast<std::size_t>(raw_count),
+    });
+
+    if (result.horizon_arc_segments > options.max_horizon_arc_segments ||
+        segment_count >
+            options.max_horizon_arc_segments - result.horizon_arc_segments) {
         result.error = GlobePolygonError::horizon_arc_limit_exceeded;
         return false;
     }
@@ -223,7 +227,14 @@ void remove_duplicate_terminal(
     }
 
     std::size_t segments = 0U;
-    if (!reserve_arc_segments(delta, options, radius_m, segments, result)) {
+    if (!reserve_arc_segments(
+            delta,
+            1U,
+            options,
+            radius_m,
+            segments,
+            result
+        )) {
         return false;
     }
 
@@ -249,45 +260,26 @@ void remove_duplicate_terminal(
         result.error = GlobePolygonError::output_ring_limit_exceeded;
         return false;
     }
-
-    const double delta =
-        interior_side == geometry::RingInteriorSide::left
-            ? kTwoPi
-            : -kTwoPi;
     if (interior_side == geometry::RingInteriorSide::unspecified) {
         result.error = GlobePolygonError::missing_interior_side;
         return false;
     }
 
-    std::size_t segments = 0U;
-    if (!reserve_arc_segments(delta, options, radius_m, segments, result)) {
-        return false;
-    }
-    segments = std::max<std::size_t>(segments, 4U);
-    if (segments > options.max_horizon_arc_segments ||
-        segments > result.horizon_arc_segments +
-            (options.max_horizon_arc_segments - result.horizon_arc_segments)) {
-        result.error = GlobePolygonError::horizon_arc_limit_exceeded;
-        return false;
-    }
+    const double delta =
+        interior_side == geometry::RingInteriorSide::left
+            ? kTwoPi
+            : -kTwoPi;
 
-    // reserve_arc_segments already accounted for its original count. If the
-    // four-vertex minimum increased it, account for the additional segments.
-    const std::size_t already_accounted = result.horizon_arc_segments;
-    const double raw_count = std::ceil(
-        std::abs(delta) / maximum_arc_step(options, radius_m)
-    );
-    const std::size_t original = std::max<std::size_t>(
-        1U,
-        static_cast<std::size_t>(raw_count)
-    );
-    if (segments > original) {
-        const std::size_t extra = segments - original;
-        if (extra > options.max_horizon_arc_segments - already_accounted) {
-            result.error = GlobePolygonError::horizon_arc_limit_exceeded;
-            return false;
-        }
-        result.horizon_arc_segments += extra;
+    std::size_t segments = 0U;
+    if (!reserve_arc_segments(
+            delta,
+            4U,
+            options,
+            radius_m,
+            segments,
+            result
+        )) {
+        return false;
     }
 
     std::vector<geometry::PlanarPoint> limb;
@@ -343,6 +335,7 @@ void remove_duplicate_terminal(
             return false;
         }
     }
+
     if (positive_angle(
             endpoints.front().angle_rad + kTwoPi -
             endpoints.back().angle_rad
@@ -612,15 +605,6 @@ GlobePolygonResult project_visible_wgs84_linear_polygon_ring(
     }
     result.source_signed_area_m2 = source_area.signed_area_m2;
 
-    const HemisphereCoverage coverage = classify_coverage(
-        source_area,
-        radius_m
-    );
-    if (coverage == HemisphereCoverage::ambiguous) {
-        result.error = GlobePolygonError::ambiguous_hemisphere_coverage;
-        return result;
-    }
-
     const GlobeCurveResult curve = project_visible_wgs84_linear_ring(
         ring,
         world_to_view,
@@ -636,6 +620,12 @@ GlobePolygonResult project_visible_wgs84_linear_polygon_ring(
     result.horizon_crossings = curve.horizon_crossings;
 
     if (curve.horizon_crossings == 0U) {
+        const HemisphereCoverage coverage = classify_coverage(source_area);
+        if (coverage == HemisphereCoverage::ambiguous) {
+            result.error = GlobePolygonError::ambiguous_hemisphere_coverage;
+            return result;
+        }
+
         if (curve.visible_parts.empty()) {
             if (coverage == HemisphereCoverage::major &&
                 !append_full_limb(
