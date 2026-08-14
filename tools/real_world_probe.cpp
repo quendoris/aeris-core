@@ -188,7 +188,7 @@ struct Panel final {
     options.absolute_area_tolerance_m2 = 10'000.0;
     options.initial_geometric_tolerance_m = 500.0;
     options.initial_local_area_tolerance_m2 = 100'000'000.0;
-    options.max_refinement_rounds = 10U;
+    options.max_refinement_rounds = 18U;
     options.subdivision_max_depth = 30U;
     options.subdivision_max_segments_per_edge = 262'144U;
 
@@ -212,6 +212,7 @@ struct Panel final {
                 );
             if (!projected.ok()) {
                 std::cerr
+                    << std::setprecision(17)
                     << "projection failure: primitive=" << static_cast<int>(primitive)
                     << " feature=" << feature.stable_id
                     << " ring=" << ring_index
@@ -221,6 +222,12 @@ struct Panel final {
                     << " subdivision_error=" << static_cast<int>(projected.subdivision_error)
                     << " sample_error=" << static_cast<int>(projected.sample_error)
                     << " failed_edge=" << projected.failed_edge
+                    << " source_m2=" << projected.source_signed_area_m2
+                    << " planar_m2=" << projected.planar_signed_area_m2
+                    << " abs_error_m2=" << projected.absolute_area_error_m2
+                    << " allowed_m2=" << projected.allowed_area_error_m2
+                    << " rounds=" << projected.refinement_rounds
+                    << " vertices=" << projected.projected_vertices
                     << '\n';
                 return false;
             }
