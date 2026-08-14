@@ -4,6 +4,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <vector>
 
 namespace aeris::geometry {
@@ -25,10 +26,21 @@ enum class GeographicError {
     integration_limit_exceeded,
 };
 
+// A closed curve on a sphere separates two valid regions. For ordinary local
+// rings the intended side is often obvious from source topology, but for
+// polar/winding rings it must be explicit. "left" and "right" are relative
+// to traversal order on the oriented WGS84 longitude/latitude surface.
+enum class RingInteriorSide : std::uint8_t {
+    unspecified = 0U,
+    left,
+    right,
+};
+
 struct LinearRing final {
     std::vector<GeodeticPoint> vertices;
     double closing_longitude_rad = 0.0;
     int longitude_winding = 0;
+    RingInteriorSide interior_side = RingInteriorSide::unspecified;
 };
 
 struct LinearRingResult final {
