@@ -26,6 +26,17 @@ namespace {
     return label;
 }
 
+[[nodiscard]] QString compact_content_identity(const std::string& hash) {
+    const QString value = QString::fromStdString(hash);
+    constexpr int visible_end = 12;
+    if (value.size() <= 2 * visible_end + 1) {
+        return value;
+    }
+    return QStringLiteral("%1…%2")
+        .arg(value.left(visible_end))
+        .arg(value.right(visible_end));
+}
+
 }  // namespace
 
 MainWindow::MainWindow(
@@ -115,14 +126,21 @@ void MainWindow::build_workbench() {
     auto* source_dock = new QDockWidget(QStringLiteral("Source"), this);
     source_dock->setObjectName(QStringLiteral("sourceDock"));
     auto* source_widget = new QWidget(source_dock);
+    source_widget->setMinimumWidth(250);
     auto* source_form = new QFormLayout(source_widget);
     source_value_ = value_label(source_widget);
+    const QString full_hash = QString::fromStdString(
+        world_->provenance.content_sha256
+    );
     source_value_->setText(
-        QStringLiteral("%1 / %2\n%3\n%4")
+        QStringLiteral("%1 / %2\n%3\nSHA-256 %4")
             .arg(QString::fromStdString(world_->provenance.provider))
             .arg(QString::fromStdString(world_->provenance.dataset))
             .arg(QString::fromStdString(world_->provenance.snapshot))
-            .arg(QString::fromStdString(world_->provenance.content_sha256))
+            .arg(compact_content_identity(world_->provenance.content_sha256))
+    );
+    source_value_->setToolTip(
+        QStringLiteral("Full verified content SHA-256:\n%1").arg(full_hash)
     );
     source_form->addRow(QStringLiteral("Verified"), source_value_);
     source_dock->setWidget(source_widget);
@@ -131,6 +149,7 @@ void MainWindow::build_workbench() {
     auto* view_dock = new QDockWidget(QStringLiteral("View"), this);
     view_dock->setObjectName(QStringLiteral("viewDock"));
     auto* view_widget = new QWidget(view_dock);
+    view_widget->setMinimumWidth(250);
     auto* view_form = new QFormLayout(view_widget);
     mode_value_ = value_label(view_widget);
     camera_value_ = value_label(view_widget);
