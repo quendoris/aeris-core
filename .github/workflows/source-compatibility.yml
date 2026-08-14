@@ -12,7 +12,6 @@ on:
       - tools/real_world_probe.cpp
       - tools/real_world_globe_probe.cpp
       - tools/real_world_globe_fill_probe.cpp
-      - tools/globe_pole_diagnostic.cpp
       - tools/shapefile_projection_probe.cpp
       - CMakeLists.txt
       - include/aeris/source/**
@@ -30,7 +29,6 @@ on:
       - tools/real_world_probe.cpp
       - tools/real_world_globe_probe.cpp
       - tools/real_world_globe_fill_probe.cpp
-      - tools/globe_pole_diagnostic.cpp
       - tools/shapefile_projection_probe.cpp
       - CMakeLists.txt
       - include/aeris/source/**
@@ -77,7 +75,7 @@ jobs:
             -DAERIS_WARNINGS_AS_ERRORS=ON \
             -DCMAKE_BUILD_TYPE=Release
           cmake --build build-compat \
-            --target aeris_real_world_probe aeris_real_world_globe_probe aeris_real_world_globe_fill_probe aeris_globe_pole_diagnostic aeris_shapefile_projection_probe \
+            --target aeris_real_world_probe aeris_real_world_globe_probe aeris_real_world_globe_fill_probe aeris_shapefile_projection_probe \
             --parallel 2
 
       - name: Diagnose projection convergence
@@ -95,14 +93,6 @@ jobs:
           root="$RUNNER_TEMP/natural-earth-v5.1.2"
           ./build-compat/aeris_shapefile_projection_probe \
             "$root/ne_110m_land.shp" 8 0
-
-      - name: Diagnose polar globe topology
-        shell: bash
-        run: |
-          set -euo pipefail
-          root="$RUNNER_TEMP/natural-earth-v5.1.2"
-          ./build-compat/aeris_globe_pole_diagnostic \
-            "$root/ne_110m_land.shp" 8
 
       - name: Verify, normalize, project, and render
         shell: bash
