@@ -19,6 +19,7 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -52,6 +53,14 @@ struct Summary final {
     std::size_t horizon_crossings = 0U;
     std::size_t coastline_parts = 0U;
     std::size_t coastline_vertices = 0U;
+
+    unsigned max_refinement_rounds = 0U;
+    double min_final_curve_tolerance_m =
+        std::numeric_limits<double>::infinity();
+    double min_final_horizon_arc_tolerance_m =
+        std::numeric_limits<double>::infinity();
+    double max_estimated_area_delta_m2 = 0.0;
+    double max_allowed_area_delta_m2 = 0.0;
 };
 
 [[nodiscard]] double radians(const double degrees) noexcept {
@@ -211,15 +220,18 @@ struct Summary final {
     Summary& summary,
     std::vector<VisibleFeature>& visible_features
 ) {
-    aeris::view::GlobePolygonOptions polygon_options{};
-    polygon_options.curve.geometric_tolerance_m = 5'000.0;
-    polygon_options.curve.horizon_tolerance_m = 0.01;
-    polygon_options.curve.max_subdivision_depth = 28U;
-    polygon_options.curve.max_root_iterations = 80U;
-    polygon_options.curve.max_segments = 1'000'000U;
-    polygon_options.horizon_arc_tolerance_m = 500.0;
-    polygon_options.max_horizon_arc_segments = 1'000'000U;
-    polygon_options.max_output_rings = 4096U;
+    aeris::view::VerifiedGlobePolygonOptions verified_options{};
+    verified_options.initial.curve.geometric_tolerance_m = 5'000.0;
+    verified_options.initial.curve.horizon_tolerance_m = 0.01;
+    verified_options.initial.curve.max_subdivision_depth = 32U;
+    verified_options.initial.curve.max_root_iterations = 80U;
+    verified_options.initial.curve.max_segments = 1'000'000U;
+    verified_options.initial.horizon_arc_tolerance_m = 500.0;
+    verified_options.initial.max_horizon_arc_segments = 1'000'000U;
+    verified_options.initial.max_output_rings = 4096U;
+    verified_options.relative_area_stability_tolerance = 5e-3;
+    verified_options.absolute_area_stability_tolerance_m2 = 1.0;
+    verified_options.max_refinement_rounds = 18U;
 
     visible_features.clear();
     visible_features.reserve(source.features.size());
@@ -235,19 +247,21 @@ struct Summary final {
             ++summary.source_rings;
             summary.source_vertices += source_ring.geometry.vertices.size();
 
-            const auto polygon =
-                aeris::view::project_visible_wgs84_linear_polygon_ring(
+            const auto verified =
+                aeris::view::project_visible_wgs84_linear_polygon_ring_verified(
                     source_ring.geometry,
                     world_to_view,
-                    polygon_options,
+                    verified_options,
                     radius_m
                 );
-            if (!polygon.ok()) {
+            if (!verified.ok()) {
+                const auto& polygon = verified.polygon;
                 std::cerr
                     << std::setprecision(17)
-                    << "globe fill failure: feature=" << feature.stable_id
+                    << "verified globe fill failure: feature=" << feature.stable_id
                     << " ring=" << ring_index
-                    << " error=" << static_cast<int>(polygon.error)
+                    << " verification_error=" << static_cast<int>(verified.error)
+                    << " finite_error=" << static_cast<int>(polygon.error)
                     << " geographic_error=" << static_cast<int>(polygon.geographic_error)
                     << " curve_error=" << static_cast<int>(polygon.curve_error)
                     << " sample_error=" << static_cast<int>(polygon.sample_error)
@@ -258,9 +272,20 @@ struct Summary final {
                     << " crossings=" << polygon.horizon_crossings
                     << " arc_segments=" << polygon.horizon_arc_segments
                     << " vertices=" << polygon.projected_vertices
+                    << " rounds=" << verified.refinement_rounds
+                    << " final_curve_tol_m="
+                    << verified.final_curve_geometric_tolerance_m
+                    << " final_arc_tol_m="
+                    << verified.final_horizon_arc_tolerance_m
+                    << " estimated_area_delta_m2="
+                    << verified.estimated_planar_area_error_m2
+                    << " allowed_area_delta_m2="
+                    << verified.allowed_planar_area_delta_m2
                     << '\n';
                 return false;
             }
+
+            const auto& polygon = verified.polygon;
             if (!verify_fill_geometry(
                     polygon,
                     radius_m,
@@ -270,10 +295,14 @@ struct Summary final {
                 return false;
             }
 
+            aeris::view::GlobeCurveOptions coastline_options =
+                verified_options.initial.curve;
+            coastline_options.geometric_tolerance_m =
+                verified.final_curve_geometric_tolerance_m;
             const auto coastline = aeris::view::project_visible_wgs84_linear_ring(
                 source_ring.geometry,
                 world_to_view,
-                polygon_options.curve,
+                coastline_options,
                 radius_m
             );
             if (!coastline.ok()) {
@@ -291,6 +320,27 @@ struct Summary final {
                     << " coast=" << coastline.horizon_crossings << '\n';
                 return false;
             }
+
+            summary.max_refinement_rounds = std::max(
+                summary.max_refinement_rounds,
+                verified.refinement_rounds
+            );
+            summary.min_final_curve_tolerance_m = std::min(
+                summary.min_final_curve_tolerance_m,
+                verified.final_curve_geometric_tolerance_m
+            );
+            summary.min_final_horizon_arc_tolerance_m = std::min(
+                summary.min_final_horizon_arc_tolerance_m,
+                verified.final_horizon_arc_tolerance_m
+            );
+            summary.max_estimated_area_delta_m2 = std::max(
+                summary.max_estimated_area_delta_m2,
+                verified.estimated_planar_area_error_m2
+            );
+            summary.max_allowed_area_delta_m2 = std::max(
+                summary.max_allowed_area_delta_m2,
+                verified.allowed_planar_area_delta_m2
+            );
 
             if (!polygon.rings.empty()) {
                 ++summary.visible_fill_source_rings;
@@ -329,14 +379,18 @@ struct Summary final {
         summary.partial_fill_source_rings == 0U ||
         summary.fill_rings == 0U ||
         summary.horizon_arc_segments == 0U ||
-        summary.horizon_crossings == 0U) {
+        summary.horizon_crossings == 0U ||
+        summary.max_refinement_rounds < 2U ||
+        !std::isfinite(summary.min_final_curve_tolerance_m) ||
+        !std::isfinite(summary.min_final_horizon_arc_tolerance_m)) {
         std::cerr
-            << "real-world fill proof did not exercise horizon topology: visible="
+            << "real-world fill proof did not exercise verified horizon topology: visible="
             << summary.visible_fill_source_rings
             << " partial=" << summary.partial_fill_source_rings
             << " fill_rings=" << summary.fill_rings
             << " arc_segments=" << summary.horizon_arc_segments
-            << " crossings=" << summary.horizon_crossings << '\n';
+            << " crossings=" << summary.horizon_crossings
+            << " max_rounds=" << summary.max_refinement_rounds << '\n';
         return false;
     }
     return true;
@@ -369,9 +423,9 @@ struct Summary final {
     };
 
     output
-        << "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"900\" height=\"900\" "
-           "viewBox=\"0 0 900 900\" role=\"img\" "
-           "aria-label=\"AERIS Natural Earth filled authalic orthographic globe proof\">\n"
+        << "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"900\" height=\"920\" "
+           "viewBox=\"0 0 900 920\" role=\"img\" "
+           "aria-label=\"AERIS Natural Earth verified filled authalic orthographic globe proof\">\n"
         << "<style>"
            ".background{fill:#f5f5f3;}"
            ".ocean{fill:#ecebe7;stroke:none;}"
@@ -381,7 +435,7 @@ struct Summary final {
            ".title{font:24px sans-serif;fill:#111;}"
            ".meta{font:14px monospace;fill:#444;}"
            "</style>\n"
-        << "<rect class=\"background\" width=\"900\" height=\"900\"/>\n"
+        << "<rect class=\"background\" width=\"900\" height=\"920\"/>\n"
         << "<circle class=\"ocean\" cx=\"" << center_x
         << "\" cy=\"" << center_y
         << "\" r=\"" << screen_radius << "\"/>\n";
@@ -437,8 +491,11 @@ struct Summary final {
         << summary.horizon_crossings << "</text>\n"
         << "<text class=\"meta\" x=\"40\" y=\"875\">fill vertices: "
         << summary.fill_vertices << " / horizon arc segments: "
-        << summary.horizon_arc_segments << " / coastline parts: "
-        << summary.coastline_parts << "</text>\n"
+        << summary.horizon_arc_segments << " / max refinement rounds: "
+        << summary.max_refinement_rounds << "</text>\n"
+        << "<text class=\"meta\" x=\"40\" y=\"900\">finest curve/arc tolerance: "
+        << summary.min_final_curve_tolerance_m << " m / "
+        << summary.min_final_horizon_arc_tolerance_m << " m</text>\n"
         << "</svg>\n";
 
     output.flush();
@@ -552,6 +609,7 @@ int main(const int argc, char** const argv) {
     }
 
     std::cout
+        << std::setprecision(17)
         << "real_world_globe_fill_probe: PASS\n"
         << "features=" << summary.features << '\n'
         << "source_rings=" << summary.source_rings << '\n'
@@ -566,6 +624,15 @@ int main(const int argc, char** const argv) {
         << "horizon_crossings=" << summary.horizon_crossings << '\n'
         << "coastline_parts=" << summary.coastline_parts << '\n'
         << "coastline_vertices=" << summary.coastline_vertices << '\n'
+        << "max_refinement_rounds=" << summary.max_refinement_rounds << '\n'
+        << "min_final_curve_tolerance_m="
+        << summary.min_final_curve_tolerance_m << '\n'
+        << "min_final_horizon_arc_tolerance_m="
+        << summary.min_final_horizon_arc_tolerance_m << '\n'
+        << "max_estimated_area_delta_m2="
+        << summary.max_estimated_area_delta_m2 << '\n'
+        << "max_allowed_area_delta_m2="
+        << summary.max_allowed_area_delta_m2 << '\n'
         << "camera_center_longitude_deg=" << center_longitude_deg << '\n'
         << "camera_center_geodetic_latitude_deg=" << center_latitude_deg << '\n'
         << "svg=" << output_path.string() << '\n';
