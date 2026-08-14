@@ -29,6 +29,7 @@ aeris_add_core_test(aeris_test_sha256 test_sha256.cpp sha256)
 aeris_add_core_test(aeris_test_natural_earth test_natural_earth.cpp natural_earth_adapter)
 aeris_add_core_test(aeris_test_globe_view test_globe_view.cpp globe_view)
 aeris_add_core_test(aeris_test_globe_curve test_globe_curve.cpp globe_curve)
+aeris_add_core_test(aeris_test_globe_polygon test_globe_polygon.cpp globe_polygon)
 
 if(TARGET aeris_diagnostic_svg)
     add_test(NAME diagnostic_svg_smoke COMMAND aeris_diagnostic_svg ${CMAKE_CURRENT_BINARY_DIR}/aeris-diagnostic.svg)
