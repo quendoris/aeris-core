@@ -10,9 +10,9 @@ The project began from a simple personal goal: make a world map worth printing a
 
 AERIS is in **early implementation**.
 
-The reference core now includes WGS84/authalic mathematics, spherical rotation, independent Sinusoidal and Mollweide primitives, canonical geographic edge/ring semantics, adaptive finite-geometry verification, projection seam handling for supported polar winding and general zero-winding rings, source acquisition/provenance, a strict minimal Polygon Shapefile reader, and pinned real-world whole-land integration proofs.
+The reference core now includes WGS84/authalic mathematics, spherical rotation, independent Sinusoidal and Mollweide primitives, canonical geographic edge/ring semantics, adaptive finite-geometry verification, projection seam handling for supported polar winding and general zero-winding rings, horizon-aware authalic orthographic globe curves, source acquisition/provenance, a strict minimal Polygon Shapefile reader, and pinned real-world whole-land integration proofs.
 
-The project format and final Philbrick Sinu-Mollweide composition remain drafts. No draft `.aeris` file or draft composite-projection output is promised long-term compatibility until the relevant contracts are explicitly frozen.
+The project format, filled visible-globe polygon topology, and final Philbrick Sinu-Mollweide composition remain drafts. No draft `.aeris` file or draft composite-projection output is promised long-term compatibility until the relevant contracts are explicitly frozen.
 
 ## Core principles
 
@@ -41,17 +41,19 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
-The normal CI gate runs on Linux, Windows, and macOS, with an additional Linux ASan/UBSan pass. It exercises authalic forward/inverse math, spherical rotations, equal-area primitives and Jacobians, canonical WGS84 ring area, adaptive subdivision, geographic seam partitioning, piecewise final area budgets, split exterior/hole semantics, source acquisition/registry contracts, Shapefile parsing, SHA-256, Natural Earth adapter behavior, globe reference projection, and diagnostic generation.
+The normal CI gate runs on Linux, Windows, and macOS, with an additional Linux ASan/UBSan pass. It exercises authalic forward/inverse math, spherical rotations, equal-area primitives and Jacobians, canonical WGS84 ring area, adaptive subdivision, geographic seam partitioning, piecewise final area budgets, split exterior/hole semantics, horizon-aware visible globe curves and root solving, source acquisition/registry contracts, Shapefile parsing, SHA-256, Natural Earth adapter behavior, and diagnostic generation.
 
-A separate networked **Source Compatibility** workflow verifies exact pinned third-party source bytes through the production ingestion and projection path without making ordinary CI depend on a live upstream service. Relevant pull requests run this proof before merge.
+A separate networked **Source Compatibility** workflow verifies exact pinned third-party source bytes through the production ingestion/projection/view paths without making ordinary CI depend on a live upstream service. Relevant pull requests run this proof before merge.
 
-## First real-world milestone
+## First real-world milestones
 
 AERIS has successfully processed the exact pinned Natural Earth `ne_110m_land` snapshot (`v5.1.2`) through its own verification, Shapefile decoding, canonical topology, WGS84/authalic area reference, polar seam handling, adaptive projection, and final area-budget checks.
 
-The normal world proof covers 127 features, 128 rings, and 5015 source vertices, including the winding Antarctic exterior ring. A second pass moves the projection central meridian to `+90°`, forcing the same real source geometry through the general zero-winding seam splitter: 5 source rings are split across 14 physical seam crossings into a total of 135 planar pieces. Both Sinusoidal and Mollweide remain inside the original-ring aggregate area budgets.
+The normal equal-area world proof covers 127 features, 128 rings, and 5015 source vertices, including the winding Antarctic exterior ring. A second pass moves the projection central meridian to `+90°`, forcing the same real source geometry through the general zero-winding seam splitter: 5 source rings are split across 14 physical seam crossings into a total of 135 planar pieces. Both Sinusoidal and Mollweide remain inside the original-ring aggregate area budgets.
 
-See [Real-World Conformance Proofs](docs/REAL-WORLD-CONFORMANCE.md) for exact resource SHA-256 identities, aggregate snapshot identity, measured area errors, Antarctic seam details, shifted-seam metrics, and explicit non-claims.
+The same pinned coastline geometry also passes the authalic orthographic globe horizon path. With a camera centered at `15°E, 20°N` geodetic, the reference wireframe produces 66 visible source rings, 74 visible fragments, 26 sign-changing horizon crossings, and 2764 projected vertices. Horizon endpoints are solved from the geographic source edges before SVG output; the diagnostic does not manufacture coastline termination with a circular clip path and deliberately does not fill land until horizon-arc polygon topology is specified.
+
+See [Real-World Conformance Proofs](docs/REAL-WORLD-CONFORMANCE.md) for exact resource SHA-256 identities and measured integration evidence, [Projection Seam Topology](docs/PROJECTION-SEAM-TOPOLOGY.md) for planar cut semantics, and [Globe Horizon Topology](docs/GLOBE-HORIZON-TOPOLOGY.md) for the visible-globe reference contract and its explicit numerical non-claims.
 
 ## Planned project and export formats
 
@@ -88,6 +90,7 @@ See [ACKNOWLEDGEMENTS.md](ACKNOWLEDGEMENTS.md) for the historical lineage, [docs
 - [AERIS Project Format — Draft](docs/AERIS-PROJECT-FORMAT.md)
 - [Canonical Geographic Geometry](docs/CANONICAL-GEOMETRY.md)
 - [Projection Seam Topology](docs/PROJECTION-SEAM-TOPOLOGY.md)
+- [Globe Horizon Topology](docs/GLOBE-HORIZON-TOPOLOGY.md)
 - [Sinu-Mollweide Projection Contract — Draft](docs/PROJECTION-SINU-MOLLWEIDE.md)
 - [Source Adapter Contract](docs/SOURCE-ADAPTERS.md)
 - [Source Pipeline](docs/SOURCE-PIPELINE.md)

@@ -40,6 +40,7 @@ add_library(aeris_core STATIC
     src/source/shapefile.cpp
     src/util/sha256.cpp
     src/view/globe.cpp
+    src/view/globe_curve.cpp
 )
 add_library(AERIS::core ALIAS aeris_core)
 target_include_directories(aeris_core PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include> $<INSTALL_INTERFACE:include>)
@@ -59,6 +60,12 @@ if(AERIS_BUILD_TOOLS)
     target_compile_features(aeris_real_world_probe PRIVATE cxx_std_17)
     set_target_properties(aeris_real_world_probe PROPERTIES CXX_EXTENSIONS OFF)
     aeris_enable_warnings(aeris_real_world_probe)
+
+    add_executable(aeris_real_world_globe_probe tools/real_world_globe_probe.cpp)
+    target_link_libraries(aeris_real_world_globe_probe PRIVATE AERIS::core)
+    target_compile_features(aeris_real_world_globe_probe PRIVATE cxx_std_17)
+    set_target_properties(aeris_real_world_globe_probe PROPERTIES CXX_EXTENSIONS OFF)
+    aeris_enable_warnings(aeris_real_world_globe_probe)
 
     add_executable(aeris_shapefile_projection_probe tools/shapefile_projection_probe.cpp)
     target_link_libraries(aeris_shapefile_projection_probe PRIVATE AERIS::core)

@@ -5,17 +5,17 @@
 
 This document records reproducible real-world integration proofs executed by AERIS against exact third-party source bytes.
 
-These proofs supplement, but do not replace, synthetic unit/property/conformance tests. Their purpose is to expose assumptions that ideal fixtures do not contain: real multipart geometry, antimeridian structure, polar winding, projection-seam splitting, source floating-point tails, provider conventions, and long irregular coastlines.
+These proofs supplement, but do not replace, synthetic unit/property/conformance tests. Their purpose is to expose assumptions that ideal fixtures do not contain: real multipart geometry, antimeridian structure, polar winding, projection-seam splitting, globe-horizon visibility, source floating-point tails, provider conventions, and long irregular coastlines.
 
 ## 1. Separation from ordinary CI
 
 The ordinary AERIS CI remains network-independent.
 
-Real upstream compatibility is checked by the separate `Source Compatibility` workflow. That workflow obtains exact pinned bytes, verifies their identities, passes them through the production acquisition/adapter/geometry/projection path, and emits a diagnostic artifact.
+Real upstream compatibility is checked by the separate `Source Compatibility` workflow. That workflow obtains exact pinned bytes, verifies their identities, passes them through the production acquisition/adapter/geometry/projection/view paths, and emits diagnostic artifacts.
 
-Projection/source changes covered by this workflow are checked on pull requests as well as on `main`, so real pinned-source compatibility is a pre-merge development gate rather than only a post-merge signal.
+Relevant source, geometry, projection, and view changes are checked on pull requests as well as on `main`, so pinned-source compatibility is a pre-merge development gate rather than only a post-merge signal.
 
-Failure of a live mirror or network path therefore does not redefine mathematical correctness of the core. Conversely, a change in source decoding, canonical geometry, or projection topology wakes the real-world gate so those assumptions are exercised again.
+Failure of a live mirror or network path therefore does not redefine mathematical correctness of the core. Conversely, a change in source decoding, canonical geometry, projection topology, or visible-globe topology wakes the real-world gate so those assumptions are exercised again.
 
 ## 2. Natural Earth 110m land proof
 
@@ -74,9 +74,9 @@ The AERIS aggregate manifest/content identity for this exact verified set is:
 
 This aggregate identity is derived from the verified manifest/resource identities, not from Git object IDs.
 
-## 3. Pipeline proved
+## 3. Pipelines proved
 
-The successful real-world path is:
+### 3.1 Equal-area planar path
 
 ```text
 pinned upstream bytes
@@ -106,7 +106,33 @@ final original-ring aggregate area-budget verification
 Sinusoidal / Mollweide diagnostic SVG
 ```
 
-No GDAL/OGR, PROJ geometry transformation, or external polygon engine participates in this proof path.
+### 3.2 Visible authalic-globe path
+
+The same pinned Shapefile bytes are also passed through:
+
+```text
+strict Polygon Shapefile decoder
+        ↓
+wgs84-linear-v1 canonical rings
+        ↓
+WGS84 geodetic latitude -> authalic latitude
+        ↓
+reference world-to-view rotation
+        ↓
+orthographic (x, y, depth)
+        ↓
+adaptive 3D curve subdivision
+        ↓
+depth(t) = 0 horizon root solve
+        ↓
+visible open coastline fragments
+        ↓
+wireframe globe SVG
+```
+
+The globe diagnostic does not use a circular clip path to manufacture coastline termination and deliberately does not fill land polygons.
+
+No GDAL/OGR, PROJ geometry transformation, or external polygon engine participates in either proof path.
 
 ## 4. Real source findings that changed AERIS
 
@@ -167,18 +193,26 @@ The same exact pinned source bytes are additionally projected with a deliberatel
 
 That shifted-seam proof exercises the production zero-winding splitter and its high-level piecewise projector before merge.
 
+### 4.6 Globe horizon is not a styling clip
+
+The visible globe path is likewise required to derive actual horizon intersections from canonical geographic edges before SVG output.
+
+AERIS does not project the hidden hemisphere and rely on a circular SVG clip to conceal it. Each visible/hidden transition is bracketed in view-space depth and solved numerically to a `depth = 0` horizon point. Visible fragments remain open when the source ring continues across the hidden hemisphere.
+
+The current reference uses deterministic adaptive five-sample subdivision. This is a numerical conformance contract, not interval arithmetic; its successful real-world proof must not be misrepresented as a formal exhaustive root enclosure for every adversarial smooth curve.
+
 ## 5. Successful normal-world metrics
 
 The normal `lambda_c = 0` proof contains:
 
 ```text
-features:          127
-source rings:      128
-projected pieces:  128
-source vertices:   5015
-winding rings:     1
-ordinary splits:   0
-ordinary crossings: 0
+features:            127
+source rings:        128
+projected pieces:    128
+source vertices:     5015
+winding rings:       1
+ordinary splits:     0
+ordinary crossings:  0
 ```
 
 ### 5.1 Sinusoidal
@@ -274,9 +308,51 @@ Mollweide
 
 This is a direct final-polygon area check after seam closure, not only a local Jacobian test.
 
-## 8. What these proofs do not establish
+## 8. Authalic orthographic globe proof
 
-These proofs establish the current WGS84/authalic pipeline, source normalization, canonical ring semantics, polar seam topology, generic zero-winding seam splitting, high-level piecewise area verification, and the independent Sinusoidal and Mollweide primitive paths against a real whole-world land dataset.
+The first pinned real-world globe diagnostic uses:
+
+```text
+camera center longitude:         +15 degrees
+camera center geodetic latitude: +20 degrees
+geometric curve tolerance:       5000 m
+horizon root tolerance:          0.01 m
+```
+
+The source cardinality remains exactly:
+
+```text
+records:         127
+rings:           128
+source vertices: 5015
+boundary normalizations: 11
+```
+
+The derived visible wireframe contains:
+
+```text
+visible source rings:      66
+visible fragments:         74
+sign-changing crossings:   26
+projected vertices:        2764
+maximum subdivision level: 1
+```
+
+The diagnostic checks that:
+
+- every emitted point remains inside the visible globe disk within the stated numerical audit allowance;
+- every closed source ring reports an even number of sign-changing horizon crossings;
+- every partially visible fragment begins and ends on the mathematical limb within the radial audit tolerance;
+- a fully visible zero-crossing ring remains a closed visible polyline;
+- no hidden continuation is replaced by a straight closing chord.
+
+The SVG artifact is wireframe coastline only. Filled visible land remains deliberately unimplemented because correct fill requires derived horizon-arc ownership from canonical interior topology.
+
+See `GLOBE-HORIZON-TOPOLOGY.md` for the numerical reference contract and its explicit non-claims.
+
+## 9. What these proofs do not establish
+
+These proofs establish the current WGS84/authalic pipeline, source normalization, canonical ring semantics, polar seam topology, generic zero-winding seam splitting, high-level piecewise area verification, independent Sinusoidal and Mollweide primitive paths, and horizon-aware orthographic coastline visibility against a real whole-world land dataset.
 
 They do **not** yet establish:
 
@@ -284,13 +360,15 @@ They do **not** yet establish:
 - source-edge/seam-coincident degeneracies that are still explicitly fail-closed;
 - complete structured exterior/hole reassociation after derived splitting for GIS/polygon-object export;
 - arbitrary multi-lobe/interrupted projection topology beyond one periodic longitude cut;
+- filled visible-globe polygon topology or horizon-arc ownership;
+- a formal interval-arithmetic proof that the current adaptive globe classifier isolates every possible adversarial horizon root;
 - political-boundary freshness or worldview semantics;
 - physical relief, imagery, or high-resolution coastline ingestion;
 - final production export tolerances.
 
 Those remain separate contracts and must not be inferred from these successful gates.
 
-## 9. Rule for future proofs
+## 10. Rule for future proofs
 
 A future real-world proof must record enough information to reproduce the exact input identity and understand what contract it exercised.
 
