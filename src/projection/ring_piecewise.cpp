@@ -11,13 +11,21 @@
 namespace aeris::projection {
 namespace {
 
-[[nodiscard]] bool finite_global_budget_options(
+[[nodiscard]] bool valid_piecewise_options(
     const RingProjectionOptions& options
 ) noexcept {
-    return std::isfinite(options.relative_area_tolerance) &&
+    return std::isfinite(options.central_meridian_rad) &&
+           std::isfinite(options.relative_area_tolerance) &&
            options.relative_area_tolerance >= 0.0 &&
            std::isfinite(options.absolute_area_tolerance_m2) &&
            options.absolute_area_tolerance_m2 > 0.0 &&
+           std::isfinite(options.initial_geometric_tolerance_m) &&
+           options.initial_geometric_tolerance_m > 0.0 &&
+           std::isfinite(options.initial_local_area_tolerance_m2) &&
+           options.initial_local_area_tolerance_m2 > 0.0 &&
+           options.max_refinement_rounds > 0U &&
+           options.subdivision_max_depth > 0U &&
+           options.subdivision_max_segments_per_edge > 0U &&
            options.max_projection_pieces > 0U;
 }
 
@@ -81,7 +89,7 @@ PiecewiseRingProjectionResult project_wgs84_linear_ring_piecewise_verified(
 ) {
     PiecewiseRingProjectionResult result{};
 
-    if (!finite_global_budget_options(options)) {
+    if (!valid_piecewise_options(options)) {
         result.error = PiecewiseRingProjectionError::invalid_options;
         return result;
     }
