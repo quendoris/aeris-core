@@ -33,16 +33,15 @@ constexpr double kTwoPi = 2.0 * geo::kPi;
     return std::abs(std::abs(delta) - geo::kPi) <= tolerance;
 }
 
-[[nodiscard]] double compensated_add(
-    const double value,
-    double& sum,
-    double& compensation
+void compensated_add_long_double(
+    const long double value,
+    long double& sum,
+    long double& compensation
 ) noexcept {
-    const double corrected = value - compensation;
-    const double next = sum + corrected;
+    const long double corrected = value - compensation;
+    const long double next = sum + corrected;
     compensation = (next - sum) - corrected;
     sum = next;
-    return sum;
 }
 
 struct IntegralResult final {
@@ -209,57 +208,54 @@ struct IntegralResult final {
     );
 }
 
-[[nodiscard]] double wgs84_surface_area_m2() noexcept {
-    const double a = geo::Wgs84::semi_major_axis_m;
-    return 2.0 * geo::kPi * a * a * geo::authalic_q_pole();
-}
-
-[[nodiscard]] bool select_topological_area(
-    const double raw_area_m2,
+[[nodiscard]] bool select_topological_area_dimensionless(
+    const long double line_integral,
     const int longitude_winding,
     const RingInteriorSide interior_side,
-    double& selected_area_m2,
-    double& topology_roundoff_m2
+    long double& selected_dimensionless,
+    long double& topology_roundoff_dimensionless
 ) noexcept {
-    const double surface_area = wgs84_surface_area_m2();
-    if (!std::isfinite(surface_area) || surface_area <= 0.0) {
+    const long double pi = static_cast<long double>(geo::kPi);
+    const long double q_pole = static_cast<long double>(geo::authalic_q_pole());
+    if (!std::isfinite(static_cast<double>(q_pole)) || q_pole <= 0.0L) {
         return false;
     }
 
-    const double winding = static_cast<double>(longitude_winding);
-    const double branch_area = raw_area_m2 + winding * (0.5 * surface_area);
-    if (!std::isfinite(branch_area)) {
+    const long double surface_dimensionless = 2.0L * pi * q_pole;
+    const long double winding = static_cast<long double>(longitude_winding);
+    const long double branch_dimensionless =
+        -0.5L * line_integral + winding * pi * q_pole;
+    if (!std::isfinite(branch_dimensionless) ||
+        !std::isfinite(surface_dimensionless) ||
+        surface_dimensionless <= 0.0L) {
         return false;
     }
 
-    double representative = std::fmod(branch_area, surface_area);
+    long double representative = std::fmod(branch_dimensionless, surface_dimensionless);
     if (!std::isfinite(representative)) {
         return false;
     }
 
     if (interior_side == RingInteriorSide::left) {
-        if (representative < 0.0) {
-            representative += surface_area;
+        if (representative < 0.0L) {
+            representative += surface_dimensionless;
         }
     } else if (interior_side == RingInteriorSide::right) {
-        if (representative > 0.0) {
-            representative -= surface_area;
+        if (representative > 0.0L) {
+            representative -= surface_dimensionless;
         }
     } else {
         return false;
     }
 
-    if (!std::isfinite(representative)) {
-        return false;
-    }
-
-    selected_area_m2 = representative;
-    topology_roundoff_m2 =
-        16.0 * std::numeric_limits<double>::epsilon() *
-        (std::abs(raw_area_m2) +
-         std::abs(winding) * 0.5 * surface_area +
-         surface_area);
-    return std::isfinite(topology_roundoff_m2);
+    selected_dimensionless = representative;
+    topology_roundoff_dimensionless =
+        32.0L * std::numeric_limits<long double>::epsilon() *
+        (std::abs(line_integral) +
+         std::abs(winding) * pi * q_pole +
+         surface_dimensionless);
+    return std::isfinite(selected_dimensionless) &&
+           std::isfinite(topology_roundoff_dimensionless);
 }
 
 }  // namespace
@@ -399,10 +395,9 @@ GeographicAreaResult signed_wgs84_linear_ring_area(
         return result;
     }
 
-    const double scale = -0.5 * geo::Wgs84::semi_major_axis_m * geo::Wgs84::semi_major_axis_m;
-    double area_sum = 0.0;
-    double area_compensation = 0.0;
-    double error_sum = 0.0;
+    long double line_integral = 0.0L;
+    long double line_compensation = 0.0L;
+    long double dimensionless_error = 0.0L;
 
     for (std::size_t index = 0U; index < ring.vertices.size(); ++index) {
         const GeodeticPoint start = ring.vertices[index];
@@ -431,51 +426,61 @@ GeographicAreaResult signed_wgs84_linear_ring_area(
         result.deepest_integration_level =
             std::max(result.deepest_integration_level, integral.deepest_level);
 
-        const double contribution = scale * longitude_delta * integral.value;
-        const double contribution_error =
-            std::abs(scale * longitude_delta) * integral.estimated_abs_error;
+        const long double contribution =
+            static_cast<long double>(longitude_delta) *
+            static_cast<long double>(integral.value);
+        const long double contribution_error =
+            std::abs(static_cast<long double>(longitude_delta)) *
+            static_cast<long double>(integral.estimated_abs_error);
         if (!std::isfinite(contribution) || !std::isfinite(contribution_error)) {
             result.error = GeographicError::numerical_domain_error;
             return result;
         }
 
-        static_cast<void>(compensated_add(
+        compensated_add_long_double(
             contribution,
-            area_sum,
-            area_compensation
-        ));
-        error_sum += contribution_error;
+            line_integral,
+            line_compensation
+        );
+        dimensionless_error += contribution_error;
     }
 
-    if (!std::isfinite(area_sum) || !std::isfinite(error_sum)) {
+    if (!std::isfinite(line_integral) || !std::isfinite(dimensionless_error)) {
         result.error = GeographicError::numerical_domain_error;
         return result;
     }
 
+    long double area_dimensionless = -0.5L * line_integral;
+    long double topology_roundoff_dimensionless = 0.0L;
     if (ring.interior_side != RingInteriorSide::unspecified) {
-        double selected_area = 0.0;
-        double topology_roundoff = 0.0;
-        if (!select_topological_area(
-                area_sum,
+        if (!select_topological_area_dimensionless(
+                line_integral,
                 ring.longitude_winding,
                 ring.interior_side,
-                selected_area,
-                topology_roundoff
+                area_dimensionless,
+                topology_roundoff_dimensionless
             )) {
             result.error = GeographicError::numerical_domain_error;
             return result;
         }
-        area_sum = selected_area;
-        error_sum += topology_roundoff;
     }
 
-    if (!std::isfinite(area_sum) || !std::isfinite(error_sum)) {
+    const long double a = static_cast<long double>(geo::Wgs84::semi_major_axis_m);
+    const long double scale = a * a;
+    const long double area_m2 = scale * area_dimensionless;
+    const long double error_m2 = scale *
+        (0.5L * dimensionless_error + topology_roundoff_dimensionless);
+    if (!std::isfinite(area_m2) || !std::isfinite(error_m2)) {
         result.error = GeographicError::numerical_domain_error;
         return result;
     }
 
-    result.signed_area_m2 = area_sum;
-    result.estimated_abs_error_m2 = error_sum;
+    result.signed_area_m2 = static_cast<double>(area_m2);
+    result.estimated_abs_error_m2 = static_cast<double>(error_m2);
+    if (!std::isfinite(result.signed_area_m2) ||
+        !std::isfinite(result.estimated_abs_error_m2)) {
+        result.error = GeographicError::numerical_domain_error;
+    }
     return result;
 }
 
