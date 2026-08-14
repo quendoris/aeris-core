@@ -5,13 +5,15 @@
 
 This document records reproducible real-world integration proofs executed by AERIS against exact third-party source bytes.
 
-These proofs supplement, but do not replace, synthetic unit/property/conformance tests. Their purpose is to expose assumptions that ideal fixtures do not contain: real multipart geometry, antimeridian structure, polar winding, source floating-point tails, provider conventions, and long irregular coastlines.
+These proofs supplement, but do not replace, synthetic unit/property/conformance tests. Their purpose is to expose assumptions that ideal fixtures do not contain: real multipart geometry, antimeridian structure, polar winding, projection-seam splitting, source floating-point tails, provider conventions, and long irregular coastlines.
 
 ## 1. Separation from ordinary CI
 
 The ordinary AERIS CI remains network-independent.
 
 Real upstream compatibility is checked by the separate `Source Compatibility` workflow. That workflow obtains exact pinned bytes, verifies their identities, passes them through the production acquisition/adapter/geometry/projection path, and emits a diagnostic artifact.
+
+Projection/source changes covered by this workflow are checked on pull requests as well as on `main`, so real pinned-source compatibility is a pre-merge development gate rather than only a post-merge signal.
 
 Failure of a live mirror or network path therefore does not redefine mathematical correctness of the core. Conversely, a change in source decoding, canonical geometry, or projection topology wakes the real-world gate so those assumptions are exercised again.
 
@@ -95,9 +97,11 @@ WGS84/authalic area reference
         ↓
 projection seam topology
         ↓
-adaptive finite planar geometry
+zero-winding geographic pieces OR polar winding closure
         ↓
-final per-ring area-budget verification
+independently verified equal-area planar pieces
+        ↓
+final original-ring aggregate area-budget verification
         ↓
 Sinusoidal / Mollweide diagnostic SVG
 ```
@@ -153,15 +157,28 @@ latitude:  -84.71338 degrees
 
 The source ring begins elsewhere, so this case also proves that polar seam topology is independent of the provider's arbitrary starting vertex.
 
-## 5. Successful world metrics
+### 4.5 Generic zero-winding seam topology
 
-The first complete successful proof contains:
+The normal Natural Earth 110m land snapshot is already organized conveniently around the usual `lambda_c = 0` world cut. Under that view its zero-winding rings do not require a generic split.
+
+AERIS therefore does not treat the normal successful render as evidence for general seam splitting.
+
+The same exact pinned source bytes are additionally projected with a deliberately shifted central meridian of `+90 degrees`. This moves the active cut through ordinary real land geometry without changing the source dataset.
+
+That shifted-seam proof exercises the production zero-winding splitter and its high-level piecewise projector before merge.
+
+## 5. Successful normal-world metrics
+
+The normal `lambda_c = 0` proof contains:
 
 ```text
-features:        127
-rings:           128
-source vertices: 5015
-winding rings:   1
+features:          127
+source rings:      128
+projected pieces:  128
+source vertices:   5015
+winding rings:     1
+ordinary splits:   0
+ordinary crossings: 0
 ```
 
 ### 5.1 Sinusoidal
@@ -188,7 +205,7 @@ The shared WGS84 semantic land-area reference for the same canonical source geom
 1.473627388154e+14 m^2
 ```
 
-The real-world gate validates every ring against its own configured absolute/relative area budget and also checks the aggregate semantic area difference against the sum of those budgets.
+The real-world gate validates every original source ring against its configured absolute/relative aggregate area budget after any derived piecewise projection. It also checks the complete semantic world-area difference against the sum of those original-ring budgets.
 
 The diagnostic proof currently uses:
 
@@ -199,7 +216,35 @@ absolute per-ring area floor:     10000 m^2
 
 These are integration-proof settings, not a declaration that future maximum-quality export is limited to this tolerance.
 
-## 6. Antarctic proof detail
+## 6. Shifted-seam whole-world proof
+
+The same pinned snapshot is also run with:
+
+```text
+central meridian: +90 degrees
+```
+
+For both Sinusoidal and Mollweide the production splitter reports:
+
+```text
+source rings:       128
+projected pieces:   135
+split source rings: 5
+physical crossings: 14
+```
+
+The resulting aggregate absolute semantic-area errors were:
+
+```text
+Sinusoidal: 2.400322000000e+06 m^2
+Mollweide:  4.740994906250e+06 m^2
+```
+
+Both complete worlds remained inside the same configured source-ring area-budget contract.
+
+This is intentionally a topology stress pass rather than the displayed default world layout. It proves that the generic seam splitter is exercised by irregular pinned real-world coastlines, not only by synthetic rectangles or hand-constructed concave fixtures.
+
+## 7. Antarctic proof detail
 
 For the real Antarctic exterior ring, the verified WGS84 signed source area is approximately:
 
@@ -209,7 +254,7 @@ For the real Antarctic exterior ring, the verified WGS84 signed source area is a
 
 The sign reflects its explicit clockwise/right-side topology.
 
-In the successful proof:
+In the successful normal-world proof:
 
 ```text
 Sinusoidal
@@ -229,22 +274,23 @@ Mollweide
 
 This is a direct final-polygon area check after seam closure, not only a local Jacobian test.
 
-## 7. What this proof does not establish
+## 8. What these proofs do not establish
 
-This proof establishes the current WGS84/authalic pipeline, source normalization, canonical ring semantics, polar seam topology, and the independent Sinusoidal and Mollweide primitive paths against a real whole-world land dataset.
+These proofs establish the current WGS84/authalic pipeline, source normalization, canonical ring semantics, polar seam topology, generic zero-winding seam splitting, high-level piecewise area verification, and the independent Sinusoidal and Mollweide primitive paths against a real whole-world land dataset.
 
-It does **not** yet establish:
+They do **not** yet establish:
 
 - the final historical Philbrick Sinu-Mollweide composition parameters;
-- general multi-crossing seam splitting for arbitrary zero-winding rings;
-- complete polygon/hole reassociation after a general projection seam split;
+- source-edge/seam-coincident degeneracies that are still explicitly fail-closed;
+- complete structured exterior/hole reassociation after derived splitting for GIS/polygon-object export;
+- arbitrary multi-lobe/interrupted projection topology beyond one periodic longitude cut;
 - political-boundary freshness or worldview semantics;
 - physical relief, imagery, or high-resolution coastline ingestion;
 - final production export tolerances.
 
-Those remain separate contracts and must not be inferred from this successful gate.
+Those remain separate contracts and must not be inferred from these successful gates.
 
-## 8. Rule for future proofs
+## 9. Rule for future proofs
 
 A future real-world proof must record enough information to reproduce the exact input identity and understand what contract it exercised.
 
