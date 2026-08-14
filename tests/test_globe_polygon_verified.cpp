@@ -39,7 +39,7 @@ namespace {
     options.initial.max_output_rings = 4096U;
     options.relative_area_stability_tolerance = 5e-3;
     options.absolute_area_stability_tolerance_m2 = 1.0;
-    options.max_refinement_rounds = 12U;
+    options.max_refinement_rounds = 18U;
     return options;
 }
 
