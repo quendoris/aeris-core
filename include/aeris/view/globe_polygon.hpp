@@ -24,6 +24,7 @@ enum class GlobePolygonError {
     horizon_arc_limit_exceeded,
     output_ring_limit_exceeded,
     non_finite_planar_area,
+    planar_area_out_of_range,
     orientation_mismatch,
 };
 
