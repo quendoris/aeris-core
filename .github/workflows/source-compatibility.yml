@@ -10,6 +10,7 @@ on:
       - .github/workflows/source-compatibility.yml
       - compat/natural-earth/**
       - tools/real_world_probe.cpp
+      - tools/real_world_globe_probe.cpp
       - tools/shapefile_projection_probe.cpp
       - CMakeLists.txt
       - include/aeris/source/**
@@ -18,11 +19,14 @@ on:
       - src/geometry/**
       - include/aeris/projection/**
       - src/projection/**
+      - include/aeris/view/**
+      - src/view/**
   pull_request:
     paths:
       - .github/workflows/source-compatibility.yml
       - compat/natural-earth/**
       - tools/real_world_probe.cpp
+      - tools/real_world_globe_probe.cpp
       - tools/shapefile_projection_probe.cpp
       - CMakeLists.txt
       - include/aeris/source/**
@@ -31,6 +35,8 @@ on:
       - src/geometry/**
       - include/aeris/projection/**
       - src/projection/**
+      - include/aeris/view/**
+      - src/view/**
   workflow_dispatch:
 
 permissions:
@@ -67,7 +73,7 @@ jobs:
             -DAERIS_WARNINGS_AS_ERRORS=ON \
             -DCMAKE_BUILD_TYPE=Release
           cmake --build build-compat \
-            --target aeris_real_world_probe aeris_shapefile_projection_probe \
+            --target aeris_real_world_probe aeris_real_world_globe_probe aeris_shapefile_projection_probe \
             --parallel 2
 
       - name: Diagnose projection convergence
@@ -98,10 +104,21 @@ jobs:
             "$RUNNER_TEMP/aeris-natural-earth-v5.1.2.svg" \
             "$retrieved_at"
 
-      - name: Upload diagnostic SVG
+      - name: Verify real-world globe horizon topology
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/natural-earth-v5.1.2"
+          ./build-compat/aeris_real_world_globe_probe \
+            "$root/ne_110m_land.shp" \
+            "$RUNNER_TEMP/aeris-natural-earth-v5.1.2-globe.svg"
+
+      - name: Upload diagnostic SVGs
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: aeris-natural-earth-v5.1.2
-          path: ${{ runner.temp }}/aeris-natural-earth-v5.1.2.svg
+          path: |
+            ${{ runner.temp }}/aeris-natural-earth-v5.1.2.svg
+            ${{ runner.temp }}/aeris-natural-earth-v5.1.2-globe.svg
           if-no-files-found: error
           retention-days: 14
