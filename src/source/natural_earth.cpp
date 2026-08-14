@@ -154,6 +154,10 @@ Result NaturalEarthLand110mAdapter::load(
             FeatureRing ring{};
             ring.geometry = source_ring.geometry;
             ring.role = source_ring.role;
+            ring.geometry.interior_side =
+                ring.role == RingRole::exterior
+                    ? geometry::RingInteriorSide::right
+                    : geometry::RingInteriorSide::left;
             feature.rings.push_back(std::move(ring));
         }
         result.features.push_back(std::move(feature));
