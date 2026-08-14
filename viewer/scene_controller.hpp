@@ -34,9 +34,13 @@ public:
     void request_verified(const SceneRequest& request);
     void cancel();
 
-private:
+    // Internal queued-delivery boundary for background scene jobs. The worker
+    // may submit only an immutable result plus the generation that produced it;
+    // stale-generation rejection and all controller/UI state mutation remain
+    // on the controller's owning thread.
     void accept_background_scene(std::uint64_t generation, SceneData scene);
 
+private:
     std::shared_ptr<const source::Result> world_;
     QThreadPool pool_;
     std::shared_ptr<std::atomic_bool> cancel_token_;
