@@ -4,6 +4,7 @@
 #include "aeris/projection/ring.hpp"
 #include "aeris/source/shapefile.hpp"
 
+#include <algorithm>
 #include <charconv>
 #include <cstddef>
 #include <cstdint>
@@ -45,6 +46,40 @@ namespace {
         }
     }
     return nullptr;
+}
+
+void print_ring_geometry(const aeris::source::ShapefileRing& source_ring) {
+    const auto& ring = source_ring.geometry;
+    double minimum_longitude = ring.vertices.front().longitude_rad;
+    double maximum_longitude = minimum_longitude;
+    double minimum_latitude = ring.vertices.front().latitude_rad;
+    double maximum_latitude = minimum_latitude;
+
+    for (const auto point : ring.vertices) {
+        minimum_longitude = std::min(minimum_longitude, point.longitude_rad);
+        maximum_longitude = std::max(maximum_longitude, point.longitude_rad);
+        minimum_latitude = std::min(minimum_latitude, point.latitude_rad);
+        maximum_latitude = std::max(maximum_latitude, point.latitude_rad);
+    }
+    minimum_longitude = std::min(minimum_longitude, ring.closing_longitude_rad);
+    maximum_longitude = std::max(maximum_longitude, ring.closing_longitude_rad);
+
+    constexpr double rad_to_deg = 180.0 / aeris::geo::kPi;
+    std::cout
+        << std::setprecision(17)
+        << "canonical_geometry:"
+        << " first_lon_deg=" << ring.vertices.front().longitude_rad * rad_to_deg
+        << " first_lat_deg=" << ring.vertices.front().latitude_rad * rad_to_deg
+        << " last_lon_deg=" << ring.vertices.back().longitude_rad * rad_to_deg
+        << " last_lat_deg=" << ring.vertices.back().latitude_rad * rad_to_deg
+        << " closing_lon_deg=" << ring.closing_longitude_rad * rad_to_deg
+        << " closing_lat_deg=" << ring.vertices.front().latitude_rad * rad_to_deg
+        << " min_lon_deg=" << minimum_longitude * rad_to_deg
+        << " max_lon_deg=" << maximum_longitude * rad_to_deg
+        << " min_lat_deg=" << minimum_latitude * rad_to_deg
+        << " max_lat_deg=" << maximum_latitude * rad_to_deg
+        << " span_lon_deg=" << (maximum_longitude - minimum_longitude) * rad_to_deg
+        << '\n';
 }
 
 void probe_primitive(
@@ -137,8 +172,15 @@ int main(const int argc, char** const argv) {
         << " input_vertices=" << source_ring.geometry.vertices.size()
         << " normalized_boundary_coordinates=" << source.normalized_boundary_coordinates
         << '\n';
+    print_ring_geometry(source_ring);
 
-    probe_primitive(source_ring.geometry, aeris::projection::EqualAreaPrimitive::sinusoidal);
-    probe_primitive(source_ring.geometry, aeris::projection::EqualAreaPrimitive::mollweide);
+    auto projection_ring = source_ring.geometry;
+    projection_ring.interior_side =
+        source_ring.role == aeris::source::RingRole::exterior
+            ? aeris::geometry::RingInteriorSide::right
+            : aeris::geometry::RingInteriorSide::left;
+
+    probe_primitive(projection_ring, aeris::projection::EqualAreaPrimitive::sinusoidal);
+    probe_primitive(projection_ring, aeris::projection::EqualAreaPrimitive::mollweide);
     return EXIT_SUCCESS;
 }
