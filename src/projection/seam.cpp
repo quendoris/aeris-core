@@ -38,7 +38,7 @@ struct BoundaryEndpoint final {
 
 struct StripClipResult final {
     std::vector<geometry::LinearRing> pieces;
-    std::size_t seam_crossings = 0U;
+    std::size_t seam_crossing_incidences = 0U;
     SeamSplitError error = SeamSplitError::none;
 };
 
@@ -135,11 +135,19 @@ struct StripClipResult final {
     const double domain_left = central_meridian_rad - geo::kPi;
     const double domain_right = central_meridian_rad + geo::kPi;
 
-    if (!longitude_inside_strip(ring.closing_longitude_rad + shift, domain_left, domain_right)) {
+    if (!longitude_inside_strip(
+            ring.closing_longitude_rad + shift,
+            domain_left,
+            domain_right
+        )) {
         return false;
     }
     for (const geometry::GeodeticPoint point : ring.vertices) {
-        if (!longitude_inside_strip(point.longitude_rad + shift, domain_left, domain_right)) {
+        if (!longitude_inside_strip(
+                point.longitude_rad + shift,
+                domain_left,
+                domain_right
+            )) {
             return false;
         }
     }
@@ -211,15 +219,16 @@ struct StripClipResult final {
         return true;
     }
 
-    double parameter0 = 0.0;
-    double parameter1 = 1.0;
-
     const double left_parameter = (left - start.longitude_rad) / delta;
     const double right_parameter = (right - start.longitude_rad) / delta;
-    const double entry = std::min(left_parameter, right_parameter);
-    const double exit = std::max(left_parameter, right_parameter);
-    parameter0 = std::max(parameter0, entry);
-    parameter1 = std::min(parameter1, exit);
+    double parameter0 = std::max(
+        0.0,
+        std::min(left_parameter, right_parameter)
+    );
+    double parameter1 = std::min(
+        1.0,
+        std::max(left_parameter, right_parameter)
+    );
 
     if (parameter1 < parameter0 - kParameterTolerance) {
         return true;
@@ -434,10 +443,10 @@ void merge_cyclic_chains(std::vector<Chain>& chains) {
         );
 
         if (start_on_boundary && !original_start_inside) {
-            ++result.seam_crossings;
+            ++result.seam_crossing_incidences;
         }
         if (end_on_boundary && !original_end_inside) {
-            ++result.seam_crossings;
+            ++result.seam_crossing_incidences;
         }
 
         append_segment(chains, clipped_start, clipped_end);
@@ -556,19 +565,11 @@ void merge_cyclic_chains(std::vector<Chain>& chains) {
             visited[current] = true;
 
             const Chain& chain = chains[current];
-            if (piece_points.empty()) {
-                piece_points.insert(
-                    piece_points.end(),
-                    chain.points.begin(),
-                    chain.points.end()
-                );
-            } else {
-                piece_points.insert(
-                    piece_points.end(),
-                    chain.points.begin(),
-                    chain.points.end()
-                );
-            }
+            piece_points.insert(
+                piece_points.end(),
+                chain.points.begin(),
+                chain.points.end()
+            );
 
             if (next_chain[current] == no_chain) {
                 result.error = SeamSplitError::topology_inconsistent;
@@ -743,6 +744,8 @@ SeamSplitResult split_wgs84_linear_ring_at_projection_seam(
     }
 
     const double base_left = options.central_meridian_rad - geo::kPi;
+    std::size_t crossing_incidences = 0U;
+
     for (long long strip = first_strip;; ++strip) {
         const double strip_turns = static_cast<double>(strip) * kTwoPi;
         const double left = base_left + strip_turns;
@@ -763,7 +766,7 @@ SeamSplitResult split_wgs84_linear_ring_at_projection_seam(
             return result;
         }
 
-        result.seam_crossings += clipped.seam_crossings;
+        crossing_incidences += clipped.seam_crossing_incidences;
         if (result.pieces.size() + clipped.pieces.size() > options.max_pieces) {
             result.error = SeamSplitError::piece_limit_exceeded;
             return result;
@@ -784,10 +787,14 @@ SeamSplitResult split_wgs84_linear_ring_at_projection_seam(
         return result;
     }
 
-    if ((result.seam_crossings % 2U) != 0U) {
+    // Every physical crossing is incident to the two longitude strips that
+    // meet at the cut. Count those two directed incidences first; only after
+    // validating parity convert them to the public physical-crossing count.
+    if ((crossing_incidences % 2U) != 0U) {
         result.error = SeamSplitError::ambiguous_seam_touch;
         return result;
     }
+    result.seam_crossings = crossing_incidences / 2U;
 
     static_cast<void>(verify_area_partition(ring, result));
     return result;
