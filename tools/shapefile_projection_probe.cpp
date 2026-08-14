@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <charconv>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -80,6 +81,68 @@ void print_ring_geometry(const aeris::source::ShapefileRing& source_ring) {
         << " max_lat_deg=" << maximum_latitude * rad_to_deg
         << " span_lon_deg=" << (maximum_longitude - minimum_longitude) * rad_to_deg
         << '\n';
+}
+
+void print_seam_crossings(
+    const aeris::geometry::LinearRing& ring,
+    const double central_meridian_rad
+) {
+    constexpr double two_pi = 2.0 * aeris::geo::kPi;
+    constexpr double rad_to_deg = 180.0 / aeris::geo::kPi;
+    std::size_t crossing_count = 0U;
+
+    for (std::size_t index = 0U; index < ring.vertices.size(); ++index) {
+        const auto start = ring.vertices[index];
+        const aeris::geometry::GeodeticPoint end =
+            index + 1U < ring.vertices.size()
+                ? ring.vertices[index + 1U]
+                : aeris::geometry::GeodeticPoint{
+                      ring.closing_longitude_rad,
+                      ring.vertices.front().latitude_rad,
+                  };
+        const double delta = end.longitude_rad - start.longitude_rad;
+        if (delta == 0.0) {
+            continue;
+        }
+
+        const double low = std::min(start.longitude_rad, end.longitude_rad);
+        const double high = std::max(start.longitude_rad, end.longitude_rad);
+        const double base_seam = central_meridian_rad + aeris::geo::kPi;
+        const long long first_k = static_cast<long long>(
+            std::ceil((low - base_seam) / two_pi)
+        );
+        const long long last_k = static_cast<long long>(
+            std::floor((high - base_seam) / two_pi)
+        );
+
+        for (long long k = first_k; k <= last_k; ++k) {
+            const double seam = base_seam + static_cast<double>(k) * two_pi;
+            const double parameter = (seam - start.longitude_rad) / delta;
+            // Half-open edge convention (0, 1] prevents a seam vertex shared
+            // by two consecutive edges from being counted twice.
+            if (!(parameter > 0.0 && parameter <= 1.0)) {
+                continue;
+            }
+
+            const auto crossing = aeris::geometry::interpolate_wgs84_linear_edge(
+                start,
+                end,
+                parameter
+            );
+            ++crossing_count;
+            std::cout
+                << std::setprecision(17)
+                << "seam_crossing: index=" << crossing_count
+                << " edge=" << index
+                << " t=" << parameter
+                << " seam_lon_deg=" << seam * rad_to_deg
+                << " latitude_deg=" << crossing.latitude_rad * rad_to_deg
+                << " direction=" << (delta > 0.0 ? "+" : "-")
+                << '\n';
+        }
+    }
+
+    std::cout << "seam_crossing_count=" << crossing_count << '\n';
 }
 
 void probe_primitive(
@@ -173,6 +236,7 @@ int main(const int argc, char** const argv) {
         << " normalized_boundary_coordinates=" << source.normalized_boundary_coordinates
         << '\n';
     print_ring_geometry(source_ring);
+    print_seam_crossings(source_ring.geometry, 0.0);
 
     auto projection_ring = source_ring.geometry;
     projection_ring.interior_side =
