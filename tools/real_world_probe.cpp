@@ -46,6 +46,9 @@ struct ProjectionSummary final {
     std::size_t rings = 0U;
     std::size_t input_vertices = 0U;
     std::size_t projected_vertices = 0U;
+    std::size_t projected_pieces = 0U;
+    std::size_t split_rings = 0U;
+    std::size_t seam_crossings = 0U;
     std::size_t winding_rings = 0U;
 };
 
@@ -179,11 +182,13 @@ struct Panel final {
 [[nodiscard]] bool project_world(
     const aeris::source::Result& source,
     const aeris::projection::EqualAreaPrimitive primitive,
+    const double central_meridian_rad,
     ProjectionSummary& summary,
     std::vector<ProjectedFeature>& projected_features
 ) {
     aeris::projection::RingProjectionOptions options{};
     options.primitive = primitive;
+    options.central_meridian_rad = central_meridian_rad;
     options.relative_area_tolerance = 1e-7;
     options.absolute_area_tolerance_m2 = 10'000.0;
     options.initial_geometric_tolerance_m = 500.0;
@@ -191,6 +196,7 @@ struct Panel final {
     options.max_refinement_rounds = 18U;
     options.subdivision_max_depth = 30U;
     options.subdivision_max_segments_per_edge = 262'144U;
+    options.max_projection_pieces = 4096U;
 
     projected_features.clear();
     projected_features.reserve(source.features.size());
@@ -205,8 +211,8 @@ struct Panel final {
                 ++summary.winding_rings;
             }
 
-            const aeris::projection::RingProjectionResult projected =
-                aeris::projection::project_wgs84_linear_ring_verified(
+            aeris::projection::PiecewiseRingProjectionResult projected =
+                aeris::projection::project_wgs84_linear_ring_piecewise_verified(
                     source_ring.geometry,
                     options
                 );
@@ -214,19 +220,26 @@ struct Panel final {
                 std::cerr
                     << std::setprecision(17)
                     << "projection failure: primitive=" << static_cast<int>(primitive)
+                    << " central_meridian_rad=" << central_meridian_rad
                     << " feature=" << feature.stable_id
                     << " ring=" << ring_index
                     << " winding=" << source_ring.geometry.longitude_winding
                     << " error=" << static_cast<int>(projected.error)
+                    << " seam_error=" << static_cast<int>(projected.seam_error)
+                    << " piece_error=" << static_cast<int>(projected.piece_error)
                     << " geographic_error=" << static_cast<int>(projected.geographic_error)
                     << " subdivision_error=" << static_cast<int>(projected.subdivision_error)
                     << " sample_error=" << static_cast<int>(projected.sample_error)
+                    << " failed_piece=" << projected.failed_piece
                     << " failed_edge=" << projected.failed_edge
                     << " source_m2=" << projected.source_signed_area_m2
                     << " planar_m2=" << projected.planar_signed_area_m2
+                    << " seam_partition_error_m2=" << projected.seam_partition_error_m2
                     << " abs_error_m2=" << projected.absolute_area_error_m2
                     << " allowed_m2=" << projected.allowed_area_error_m2
-                    << " rounds=" << projected.refinement_rounds
+                    << " pieces=" << projected.projected_pieces
+                    << " crossings=" << projected.seam_crossings
+                    << " rounds=" << projected.max_piece_refinement_rounds
                     << " vertices=" << projected.projected_vertices
                     << '\n';
                 return false;
@@ -254,7 +267,15 @@ struct Panel final {
             ++summary.rings;
             summary.input_vertices += source_ring.geometry.vertices.size();
             summary.projected_vertices += projected.projected_vertices;
-            projected_feature.rings.push_back(projected.points);
+            summary.projected_pieces += projected.projected_pieces;
+            summary.seam_crossings += projected.seam_crossings;
+            if (projected.projected_pieces > 1U) {
+                ++summary.split_rings;
+            }
+
+            for (auto& piece : projected.pieces) {
+                projected_feature.rings.push_back(std::move(piece));
+            }
         }
 
         projected_features.push_back(std::move(projected_feature));
@@ -440,8 +461,9 @@ void write_sinusoidal_outline(
         << mollweide_summary.aggregate_abs_error_m2 << " m²</text>\n"
         << "<text class=\"meta\" x=\"60\" y=\"680\">features: "
         << source.features.size() << " / rings: "
-        << sinusoidal_summary.rings << " / source vertices: "
-        << sinusoidal_summary.input_vertices << "</text>\n"
+        << sinusoidal_summary.rings << " / pieces: "
+        << sinusoidal_summary.projected_pieces << " / seam crossings: "
+        << sinusoidal_summary.seam_crossings << "</text>\n"
         << "</svg>\n";
 
     output.flush();
@@ -536,15 +558,54 @@ int main(const int argc, char** const argv) {
     if (!project_world(
             loaded.source,
             aeris::projection::EqualAreaPrimitive::sinusoidal,
+            0.0,
             sinusoidal_summary,
             sinusoidal
         ) ||
         !project_world(
             loaded.source,
             aeris::projection::EqualAreaPrimitive::mollweide,
+            0.0,
             mollweide_summary,
             mollweide
         )) {
+        return EXIT_FAILURE;
+    }
+
+    ProjectionSummary stress_sinusoidal_summary{};
+    ProjectionSummary stress_mollweide_summary{};
+    std::vector<ProjectedFeature> stress_sinusoidal;
+    std::vector<ProjectedFeature> stress_mollweide;
+    constexpr double stress_central_meridian_rad = aeris::geo::kHalfPi;
+
+    if (!project_world(
+            loaded.source,
+            aeris::projection::EqualAreaPrimitive::sinusoidal,
+            stress_central_meridian_rad,
+            stress_sinusoidal_summary,
+            stress_sinusoidal
+        ) ||
+        !project_world(
+            loaded.source,
+            aeris::projection::EqualAreaPrimitive::mollweide,
+            stress_central_meridian_rad,
+            stress_mollweide_summary,
+            stress_mollweide
+        )) {
+        return EXIT_FAILURE;
+    }
+
+    if (stress_sinusoidal_summary.split_rings == 0U ||
+        stress_sinusoidal_summary.seam_crossings == 0U ||
+        stress_mollweide_summary.split_rings == 0U ||
+        stress_mollweide_summary.seam_crossings == 0U) {
+        std::cerr
+            << "shifted-seam real-world stress did not exercise generic splitting: "
+            << "sin_split_rings=" << stress_sinusoidal_summary.split_rings
+            << " sin_crossings=" << stress_sinusoidal_summary.seam_crossings
+            << " moll_split_rings=" << stress_mollweide_summary.split_rings
+            << " moll_crossings=" << stress_mollweide_summary.seam_crossings
+            << '\n';
         return EXIT_FAILURE;
     }
 
@@ -568,6 +629,12 @@ int main(const int argc, char** const argv) {
               << "rings=" << sinusoidal_summary.rings << '\n'
               << "source_vertices=" << sinusoidal_summary.input_vertices << '\n'
               << "winding_rings=" << sinusoidal_summary.winding_rings << '\n'
+              << "sinusoidal_projected_pieces=" << sinusoidal_summary.projected_pieces << '\n'
+              << "mollweide_projected_pieces=" << mollweide_summary.projected_pieces << '\n'
+              << "sinusoidal_split_rings=" << sinusoidal_summary.split_rings << '\n'
+              << "mollweide_split_rings=" << mollweide_summary.split_rings << '\n'
+              << "sinusoidal_seam_crossings=" << sinusoidal_summary.seam_crossings << '\n'
+              << "mollweide_seam_crossings=" << mollweide_summary.seam_crossings << '\n'
               << "sinusoidal_projected_vertices=" << sinusoidal_summary.projected_vertices << '\n'
               << "mollweide_projected_vertices=" << mollweide_summary.projected_vertices << '\n'
               << "source_semantic_land_area_m2=" << sinusoidal_summary.semantic_source_area_m2 << '\n'
@@ -577,6 +644,15 @@ int main(const int argc, char** const argv) {
               << "mollweide_abs_error_m2=" << mollweide_summary.aggregate_abs_error_m2 << '\n'
               << "sinusoidal_max_ring_error_m2=" << sinusoidal_summary.max_ring_abs_error_m2 << '\n'
               << "mollweide_max_ring_error_m2=" << mollweide_summary.max_ring_abs_error_m2 << '\n'
+              << "stress_central_meridian_deg=9.000000000000e+01\n"
+              << "stress_sinusoidal_projected_pieces=" << stress_sinusoidal_summary.projected_pieces << '\n'
+              << "stress_mollweide_projected_pieces=" << stress_mollweide_summary.projected_pieces << '\n'
+              << "stress_sinusoidal_split_rings=" << stress_sinusoidal_summary.split_rings << '\n'
+              << "stress_mollweide_split_rings=" << stress_mollweide_summary.split_rings << '\n'
+              << "stress_sinusoidal_seam_crossings=" << stress_sinusoidal_summary.seam_crossings << '\n'
+              << "stress_mollweide_seam_crossings=" << stress_mollweide_summary.seam_crossings << '\n'
+              << "stress_sinusoidal_abs_error_m2=" << stress_sinusoidal_summary.aggregate_abs_error_m2 << '\n'
+              << "stress_mollweide_abs_error_m2=" << stress_mollweide_summary.aggregate_abs_error_m2 << '\n'
               << "svg=" << output_path.string() << '\n';
 
     return EXIT_SUCCESS;

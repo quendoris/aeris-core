@@ -203,13 +203,18 @@ This verifies the delivered geometry rather than merely the analytical point tra
 
 The WGS84 antimeridian and a projection seam are different concepts.
 
-Canonical geometry remains continuous and projection-independent. A projection may later need to:
+Canonical geometry remains continuous and projection-independent. The current projection layer derives temporary topology as required:
 
-- cyclically rebase a winding ring at its active seam;
-- close a polar region along the projection-domain boundary and pole;
-- split a zero-winding ring into multiple planar pieces when it crosses the active seam.
+- a supported winding polar ring is cyclically rebased at its active seam and closed along the projection-domain boundary through the selected pole;
+- a zero-winding ring that fits one equivalent longitude branch is shifted by whole turns without changing its shape;
+- a zero-winding ring that genuinely crosses the active seam is partitioned into one or more derived geographic pieces before projection;
+- every derived piece is independently projected and the signed planar sum is verified against the original unsplit WGS84 ring.
+
+The general zero-winding splitter reconstructs connected components from directed source chains plus seam-boundary connectors. It does not assume that one seam crossing pair equals one planar component.
 
 Those operations are derived projection topology. They MUST NOT mutate the canonical WGS84 ring or replace its source provenance.
+
+See [PROJECTION-SEAM-TOPOLOGY.md](PROJECTION-SEAM-TOPOLOGY.md) for the normative development contract and current fail-closed boundaries.
 
 ## 11. Import rule
 
