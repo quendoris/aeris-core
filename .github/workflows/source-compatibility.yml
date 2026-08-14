@@ -18,6 +18,19 @@ on:
       - src/geometry/**
       - include/aeris/projection/**
       - src/projection/**
+  pull_request:
+    paths:
+      - .github/workflows/source-compatibility.yml
+      - compat/natural-earth/**
+      - tools/real_world_probe.cpp
+      - tools/shapefile_projection_probe.cpp
+      - CMakeLists.txt
+      - include/aeris/source/**
+      - src/source/**
+      - include/aeris/geometry/**
+      - src/geometry/**
+      - include/aeris/projection/**
+      - src/projection/**
   workflow_dispatch:
 
 permissions:
