@@ -44,6 +44,12 @@ void compensated_add_long_double(
     sum = next;
 }
 
+[[nodiscard]] long double binary64_value_roundoff(const double value) noexcept {
+    constexpr long double ulp_budget = 16.0L;
+    return ulp_budget * static_cast<long double>(std::numeric_limits<double>::epsilon()) *
+           std::max(1.0L, std::abs(static_cast<long double>(value)));
+}
+
 struct IntegralResult final {
     double value = 0.0;
     double estimated_abs_error = 0.0;
@@ -216,8 +222,9 @@ struct IntegralResult final {
     long double& topology_roundoff_dimensionless
 ) noexcept {
     const long double pi = static_cast<long double>(geo::kPi);
-    const long double q_pole = static_cast<long double>(geo::authalic_q_pole());
-    if (!std::isfinite(static_cast<double>(q_pole)) || q_pole <= 0.0L) {
+    const double q_pole_binary64 = geo::authalic_q_pole();
+    const long double q_pole = static_cast<long double>(q_pole_binary64);
+    if (!std::isfinite(q_pole_binary64) || q_pole <= 0.0L) {
         return false;
     }
 
@@ -248,12 +255,15 @@ struct IntegralResult final {
         return false;
     }
 
+    const long double q_pole_roundoff = binary64_value_roundoff(q_pole_binary64);
     selected_dimensionless = representative;
     topology_roundoff_dimensionless =
         32.0L * std::numeric_limits<long double>::epsilon() *
-        (std::abs(line_integral) +
-         std::abs(winding) * pi * q_pole +
-         surface_dimensionless);
+            (std::abs(line_integral) +
+             std::abs(winding) * pi * q_pole +
+             surface_dimensionless) +
+        std::abs(winding) * pi * q_pole_roundoff +
+        2.0L * pi * q_pole_roundoff;
     return std::isfinite(selected_dimensionless) &&
            std::isfinite(topology_roundoff_dimensionless);
 }
@@ -429,9 +439,10 @@ GeographicAreaResult signed_wgs84_linear_ring_area(
         const long double contribution =
             static_cast<long double>(longitude_delta) *
             static_cast<long double>(integral.value);
+        const long double q_roundoff = binary64_value_roundoff(integral.value);
         const long double contribution_error =
             std::abs(static_cast<long double>(longitude_delta)) *
-            static_cast<long double>(integral.estimated_abs_error);
+            (static_cast<long double>(integral.estimated_abs_error) + q_roundoff);
         if (!std::isfinite(contribution) || !std::isfinite(contribution_error)) {
             result.error = GeographicError::numerical_domain_error;
             return result;
