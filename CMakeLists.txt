@@ -41,6 +41,7 @@ add_library(aeris_core STATIC
     src/util/sha256.cpp
     src/view/globe.cpp
     src/view/globe_curve.cpp
+    src/view/globe_polygon.cpp
 )
 add_library(AERIS::core ALIAS aeris_core)
 target_include_directories(aeris_core PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include> $<INSTALL_INTERFACE:include>)
