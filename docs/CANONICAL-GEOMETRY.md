@@ -3,7 +3,7 @@
 **Status:** DRAFT IMPLEMENTATION CONTRACT  
 **Canonical edge model:** `wgs84-linear-v1`
 
-This document defines the first explicit geographic edge semantics used by the AERIS reference core.
+This document defines the first explicit geographic edge and ring semantics used by the AERIS reference core.
 
 ## 1. Why the edge model is explicit
 
@@ -49,25 +49,58 @@ may normalize internally to
 
 without creating a false 340-degree edge.
 
-## 4. Ring closure
+Longitude values outside `[-pi, pi]` are therefore valid internal canonical coordinates after unwrapping. They represent a continuous branch, not invalid geographic positions.
+
+## 4. Ring closure and winding
 
 Canonical AERIS rings store each ordinary vertex once; a duplicate terminal copy of the first source vertex is removed during normalization when it is exactly equivalent.
 
 The closing edge is implicit. Its longitude endpoint is the equivalent copy of the first longitude that continues the same unwrapped branch from the last vertex.
 
-This permits the geometry core to detect non-zero longitude winding instead of destroying that information during normalization.
+The net longitude change across the complete closed traversal is retained as an integer winding number `w`:
 
-## 5. Polar and global winding
+```text
+w = (lambda_close - lambda_start) / (2 pi)
+```
 
-The first area implementation supports rings with zero net longitude winding.
+up to a tightly bounded floating-point verification tolerance.
 
-A non-zero winding is currently a **fail-closed result**, not an invitation to guess which spherical/ellipsoidal region is intended. Polar caps, global masks, and other winding geometries require an explicit stable inside/outside and orientation contract before AERIS 1.0.
+AERIS does not destroy this information by wrapping every vertex independently back into `[-pi, pi]`.
 
-This restriction is temporary but normative for the current reference implementation.
+## 5. A ring needs an interior side
+
+A closed curve on a sphere or ellipsoid separates two valid regions. The vertex sequence alone does not, in general, identify which one is intended.
+
+Canonical AERIS geometry therefore has an explicit topological property:
+
+```text
+RingInteriorSide = unspecified | left | right
+```
+
+`left` and `right` are relative to traversal direction on the oriented WGS84 longitude/latitude surface.
+
+For an ordinary local zero-winding ring, signed boundary area can be evaluated without choosing a global branch. For a non-zero-winding ring, however, `interior_side` is mandatory. If it is `unspecified`, area evaluation fails closed with `longitude_winding_unsupported`.
+
+AERIS MUST NOT silently choose the smaller of the two regions. A valid explicit region may exceed one hemisphere.
+
+### 5.1 Where interior-side semantics come from
+
+Canonicalization does not invent `interior_side`.
+
+The source adapter is responsible for translating a provider's documented polygon topology into AERIS `left`/`right` semantics. A low-level file-format decoder may expose source ring orientation, but it must not pretend that byte-format orientation alone is universal geographic meaning.
+
+For the current Natural Earth Shapefile adapter, the ESRI Polygon convention is translated as:
+
+```text
+clockwise exterior      -> right
+counter-clockwise hole  -> left
+```
+
+This translation belongs to the provider adapter, not to the generic Shapefile reader.
 
 ## 6. WGS84 signed area for the canonical edge
 
-For WGS84 geodetic latitude `phi`, AERIS already defines the authalic function `q(phi)`.
+For WGS84 geodetic latitude `phi`, AERIS defines the authalic function `q(phi)`.
 
 The ellipsoidal area element is
 
@@ -75,10 +108,16 @@ The ellipsoidal area element is
 dA = (a^2 / 2) q'(phi) dphi dlambda
 ```
 
-For a zero-winding, positively oriented ring, Green/Stokes reduction gives the signed boundary integral
+Define the dimensionless boundary integral
 
 ```text
-A = -(a^2 / 2) integral_ring q(phi) dlambda
+I = integral_ring q(phi) dlambda
+```
+
+For a zero-winding branch, the signed area is
+
+```text
+A0 = -(a^2 / 2) I
 ```
 
 For one `wgs84-linear-v1` edge,
@@ -91,15 +130,57 @@ phi(t)  = phi0 + t (phi1 - phi0)
 and therefore
 
 ```text
-A_edge = -(a^2 / 2) (lambda1 - lambda0)
+I_edge = (lambda1 - lambda0)
          * integral_0^1 q(phi(t)) dt
 ```
 
-AERIS evaluates this one-dimensional integral with its own deterministic adaptive Simpson reference integrator and reports the accumulated numerical error estimate.
+AERIS evaluates this one-dimensional integral with its own deterministic adaptive Simpson reference integrator.
 
 Constant-longitude edges contribute exactly zero. Constant-latitude edges reduce to a constant `q(phi)` integral.
 
-## 7. Projection-area invariant
+## 7. Global winding branch
+
+The total WGS84 ellipsoid surface area under the same authalic formulation is
+
+```text
+S = 2 pi a^2 q_p
+  = 4 pi R_q^2
+```
+
+where `q_p = q(pi/2)` and `R_q` is the WGS84 authalic radius.
+
+For integer longitude winding `w`, the topological branch before selecting the intended side is
+
+```text
+A_branch = A0 + w S / 2
+```
+
+AERIS then selects an equivalent representative modulo `S` according to explicit interior side:
+
+```text
+left  -> non-negative representative in [0, S)
+right -> non-positive representative in (-S, 0]
+```
+
+This is not a "minor area" rule. The right-side complement of a small left-side polar cap is intentionally representable as a region whose magnitude exceeds `S/2`.
+
+The implementation combines winding terms in dimensionless space before multiplication by `a^2`. This avoids unnecessary cancellation between world-scale square-metre values.
+
+## 8. Numerical error contract
+
+`GeographicAreaResult::estimated_abs_error_m2` is part of the reference contract, not decorative telemetry.
+
+It includes at least:
+
+- adaptive quadrature error accumulated across source edges;
+- a conservative binary64 evaluation floor for `q(phi)` values;
+- floating-point uncertainty introduced by global winding/topology terms.
+
+The reference implementation may use wider intermediate arithmetic where a platform provides it, but correctness must not depend on `long double` being wider than `double`. In particular, MSVC implementations where both have the same width remain supported.
+
+Analytical conformance tests compare against this published numerical budget rather than assuming an unrealistically uniform relative epsilon at planetary area scale.
+
+## 9. Projection-area invariant
 
 The canonical edge is a continuous WGS84 curve. Rendering it requires:
 
@@ -107,24 +188,41 @@ The canonical edge is a continuous WGS84 curve. Rendering it requires:
 wgs84-linear-v1 edge
         -> authalic latitude
         -> selected equal-area primitive / composition
+        -> seam/topology handling where required
         -> adaptive planar subdivision
-        -> finite planar polyline
+        -> finite planar geometry
 ```
 
-Tests must compare the signed WGS84 boundary-integral area against the signed planar polygon area after adaptive subdivision.
+Tests compare the signed WGS84 boundary-integral area against the signed planar area of the finite geometry actually consumed by SVG/PDF/raster paths.
 
-This verifies the actual finite geometry consumed by SVG/PDF/raster paths, not merely the analytical point transform.
+For geometry split into multiple planar pieces, the invariant applies to the signed sum of all pieces.
 
-## 8. Import rule
+This verifies the delivered geometry rather than merely the analytical point transform.
 
-An importer must identify or define the source edge semantics.
+## 10. Canonical topology is not projection topology
 
-If they are already equivalent to `wgs84-linear-v1`, the vertices may be normalized directly.
+The WGS84 antimeridian and a projection seam are different concepts.
+
+Canonical geometry remains continuous and projection-independent. A projection may later need to:
+
+- cyclically rebase a winding ring at its active seam;
+- close a polar region along the projection-domain boundary and pole;
+- split a zero-winding ring into multiple planar pieces when it crosses the active seam.
+
+Those operations are derived projection topology. They MUST NOT mutate the canonical WGS84 ring or replace its source provenance.
+
+## 11. Import rule
+
+An importer must identify or define the source edge semantics and polygon topology.
+
+If edges are already equivalent to `wgs84-linear-v1`, the vertices may be normalized directly.
 
 If they differ, the importer must approximate the source curve into `wgs84-linear-v1` segments to a documented geographic error bound. AERIS must never silently change an ellipsoidal geodesic, projected-space curve, spline, or other source edge into coordinate-linear WGS84 geometry.
 
-## 9. Stable-format rule
+Likewise, provider-specific ring orientation or polygon-side rules must be translated explicitly into canonical topology rather than assumed globally.
 
-`wgs84-linear-v1` is a semantic identifier, not merely an implementation nickname.
+## 12. Stable-format rule
 
-Once persisted by a stable AERIS project format, its meaning cannot be changed. A future edge model must receive a new identifier rather than redefining this one.
+`wgs84-linear-v1` and the eventual persisted ring-topology semantics are semantic contracts, not implementation nicknames.
+
+Once persisted by a stable AERIS project format, their meanings cannot be changed. A future edge or topology model must receive a new semantic identifier rather than redefining an existing one.
