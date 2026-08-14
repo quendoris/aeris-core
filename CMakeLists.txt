@@ -29,6 +29,7 @@ add_library(aeris_core STATIC
     src/geometry/planar.cpp
     src/projection/primitives.cpp
     src/projection/ring.cpp
+    src/projection/seam.cpp
     src/projection/subdivide.cpp
     src/projection/wgs84.cpp
     src/source/acquisition.cpp
