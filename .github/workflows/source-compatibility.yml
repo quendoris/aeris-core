@@ -65,6 +65,14 @@ jobs:
           ./build-compat/aeris_shapefile_projection_probe \
             "$root/ne_110m_land.shp" 3 0
 
+      - name: Diagnose polar winding geometry
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/natural-earth-v5.1.2"
+          ./build-compat/aeris_shapefile_projection_probe \
+            "$root/ne_110m_land.shp" 8 0
+
       - name: Verify, normalize, project, and render
         shell: bash
         run: |
