@@ -56,8 +56,16 @@ jobs:
           -DAERIS_WARNINGS_AS_ERRORS=ON
           -DCMAKE_BUILD_TYPE=Release
 
-      - name: Build viewer
-        run: cmake --build build-viewer --target aeris_viewer --parallel 2
+      - name: Build viewer and scene probe
+        run: >-
+          cmake --build build-viewer
+          --target aeris_viewer aeris_viewer_scene_probe
+          --parallel 2
+
+      - name: Build all real viewer scenes
+        run: >-
+          ./build-viewer/viewer/aeris_viewer_scene_probe
+          --snapshot ${{ runner.temp }}/natural-earth-v5.1.2
 
       - name: Offscreen startup smoke test
         env:
@@ -66,3 +74,19 @@ jobs:
           ./build-viewer/viewer/aeris_viewer
           --snapshot ${{ runner.temp }}/natural-earth-v5.1.2
           --smoke
+
+      - name: Render verified workbench screenshot
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: >-
+          ./build-viewer/viewer/aeris_viewer
+          --snapshot ${{ runner.temp }}/natural-earth-v5.1.2
+          --render ${{ runner.temp }}/aeris-viewer-globe.png
+
+      - name: Upload viewer screenshot
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: aeris-viewer-globe
+          path: ${{ runner.temp }}/aeris-viewer-globe.png
+          if-no-files-found: error
+          retention-days: 14

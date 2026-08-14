@@ -20,3 +20,13 @@ set_target_properties(aeris_viewer PROPERTIES
     MACOSX_BUNDLE ON
 )
 aeris_enable_warnings(aeris_viewer)
+
+add_executable(aeris_viewer_scene_probe
+    scene_probe.cpp
+    scene_builder.cpp
+    world_loader.cpp
+)
+target_link_libraries(aeris_viewer_scene_probe PRIVATE AERIS::core)
+target_compile_features(aeris_viewer_scene_probe PRIVATE cxx_std_17)
+set_target_properties(aeris_viewer_scene_probe PROPERTIES CXX_EXTENSIONS OFF)
+aeris_enable_warnings(aeris_viewer_scene_probe)

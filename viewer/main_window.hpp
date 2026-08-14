@@ -11,7 +11,6 @@
 #include <memory>
 
 class QLabel;
-class QAction;
 
 namespace aeris::viewer {
 
@@ -25,11 +24,16 @@ public:
         QWidget* parent = nullptr
     );
 
+    // Present a scene that has already passed the caller's requested scene
+    // contract. The normal interactive path uses SceneController; the explicit
+    // method also gives deterministic render/screenshot tests the exact same UI
+    // presentation boundary without inventing a second test-only canvas.
+    void present_scene(SceneData scene);
+
 private:
     void set_mode(ViewMode mode);
     void request_current_verified();
     void update_inspector(const SceneData& scene);
-    void apply_scene(SceneData scene);
     void apply_busy(bool busy);
     void build_workbench();
     void apply_theme();

@@ -12,7 +12,6 @@
 #include <QLabel>
 #include <QStatusBar>
 #include <QToolBar>
-#include <QVBoxLayout>
 #include <QWidget>
 
 #include <utility>
@@ -41,7 +40,7 @@ MainWindow::MainWindow(
     apply_theme();
 
     controller_.set_scene_callback(
-        [this](SceneData scene) { apply_scene(std::move(scene)); }
+        [this](SceneData scene) { present_scene(std::move(scene)); }
     );
     controller_.set_busy_callback(
         [this](const bool busy) { apply_busy(busy); }
@@ -186,7 +185,7 @@ void MainWindow::request_current_verified() {
     controller_.request_verified(request);
 }
 
-void MainWindow::apply_scene(SceneData scene) {
+void MainWindow::present_scene(SceneData scene) {
     if (!scene.ok) {
         statusBar()->showMessage(
             QStringLiteral("Scene failed: %1")
