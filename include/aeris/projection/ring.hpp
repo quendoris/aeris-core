@@ -5,6 +5,7 @@
 
 #include "aeris/geometry/geographic.hpp"
 #include "aeris/geometry/planar.hpp"
+#include "aeris/projection/seam.hpp"
 #include "aeris/projection/subdivide.hpp"
 #include "aeris/projection/wgs84.hpp"
 
@@ -36,6 +37,7 @@ struct RingProjectionOptions final {
     unsigned max_refinement_rounds = 12U;
     unsigned subdivision_max_depth = 32U;
     std::size_t subdivision_max_segments_per_edge = 1'000'000U;
+    std::size_t max_projection_pieces = 4096U;
 };
 
 struct RingProjectionResult final {
@@ -61,6 +63,56 @@ struct RingProjectionResult final {
 };
 
 [[nodiscard]] RingProjectionResult project_wgs84_linear_ring_verified(
+    const geometry::LinearRing& ring,
+    const RingProjectionOptions& options = {}
+);
+
+enum class PiecewiseRingProjectionError {
+    none = 0,
+    invalid_options,
+    geographic_area_failed,
+    seam_split_failed,
+    piece_projection_failed,
+    piece_orientation_changed,
+    non_finite_planar_area,
+    aggregate_area_budget_unmet,
+};
+
+struct PiecewiseRingProjectionResult final {
+    std::vector<std::vector<geometry::PlanarPoint>> pieces;
+
+    double source_signed_area_m2 = 0.0;
+    double planar_signed_area_m2 = 0.0;
+    double absolute_area_error_m2 = 0.0;
+    double allowed_area_error_m2 = 0.0;
+    double seam_partition_error_m2 = 0.0;
+
+    std::size_t seam_crossings = 0U;
+    std::size_t projected_pieces = 0U;
+    std::size_t projected_vertices = 0U;
+    unsigned max_piece_refinement_rounds = 0U;
+
+    PiecewiseRingProjectionError error = PiecewiseRingProjectionError::none;
+    SeamSplitError seam_error = SeamSplitError::none;
+    RingProjectionError piece_error = RingProjectionError::none;
+    geometry::GeographicError geographic_error = geometry::GeographicError::none;
+    SubdivisionError subdivision_error = SubdivisionError::none;
+    geo::MathError sample_error = geo::MathError::none;
+    std::size_t failed_piece = 0U;
+    std::size_t failed_edge = 0U;
+
+    [[nodiscard]] bool ok() const noexcept {
+        return error == PiecewiseRingProjectionError::none;
+    }
+};
+
+// Verified high-level ring projection. Zero-winding rings are first partitioned
+// at the active projection seam when necessary; every resulting geographic
+// piece then passes through the existing single-ring verified projector. Polar
+// nonzero-winding rings remain owned by the dedicated polar seam contract.
+// The final signed planar sum is checked again against the original WGS84 ring
+// under one global area budget.
+[[nodiscard]] PiecewiseRingProjectionResult project_wgs84_linear_ring_piecewise_verified(
     const geometry::LinearRing& ring,
     const RingProjectionOptions& options = {}
 );
