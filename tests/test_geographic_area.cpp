@@ -71,6 +71,10 @@ void test_antimeridian_unwrap() {
     expect_near("third longitude remains 190 degrees", ring.value.vertices[2].longitude_rad, radians(190.0), 2e-15);
     expect_near("fourth longitude returns to 170 degrees", ring.value.vertices[3].longitude_rad, radians(170.0), 2e-15);
     expect_true("ordinary antimeridian ring has zero winding", ring.value.longitude_winding == 0);
+    expect_true(
+        "canonicalization does not invent an interior side",
+        ring.value.interior_side == aeris::geometry::RingInteriorSide::unspecified
+    );
 }
 
 void test_ambiguous_half_turn_rejected() {
@@ -135,15 +139,18 @@ void test_rectangle_area_and_orientation() {
     }
 }
 
-void test_nonzero_winding_fails_closed() {
+[[nodiscard]] aeris::geometry::LinearRingResult make_parallel_ring(const double latitude_deg) {
     const std::vector<aeris::geometry::GeodeticPoint> input{
-        {radians(0.0), radians(80.0)},
-        {radians(90.0), radians(80.0)},
-        {radians(180.0), radians(80.0)},
-        {radians(-90.0), radians(80.0)},
+        {radians(0.0), radians(latitude_deg)},
+        {radians(90.0), radians(latitude_deg)},
+        {radians(180.0), radians(latitude_deg)},
+        {radians(-90.0), radians(latitude_deg)},
     };
+    return aeris::geometry::canonicalize_wgs84_linear_ring(input);
+}
 
-    const auto ring = aeris::geometry::canonicalize_wgs84_linear_ring(input);
+void test_nonzero_winding_fails_closed_without_topology() {
+    const auto ring = make_parallel_ring(80.0);
     expect_true("polar-style ring canonicalizes structurally", ring.ok());
     if (!ring.ok()) {
         return;
@@ -152,9 +159,64 @@ void test_nonzero_winding_fails_closed() {
     expect_true("polar-style ring exposes winding", ring.value.longitude_winding == 1);
     const auto area = aeris::geometry::signed_wgs84_linear_ring_area(ring.value);
     expect_true(
-        "nonzero winding area fails closed",
+        "nonzero winding without interior topology fails closed",
         area.error == aeris::geometry::GeographicError::longitude_winding_unsupported
     );
+}
+
+void test_explicit_polar_interior_areas() {
+    const double a = aeris::geo::Wgs84::semi_major_axis_m;
+    const double q_pole = aeris::geo::authalic_q_pole();
+    const double surface_area = 2.0 * aeris::geo::kPi * a * a * q_pole;
+
+    auto north = make_parallel_ring(80.0);
+    expect_true("north polar ring canonicalizes", north.ok());
+    if (!north.ok()) {
+        return;
+    }
+    north.value.interior_side = aeris::geometry::RingInteriorSide::left;
+    const auto north_area = aeris::geometry::signed_wgs84_linear_ring_area(north.value);
+    expect_true("north polar left-side area succeeds", north_area.ok());
+    if (north_area.ok()) {
+        const double expected =
+            aeris::geo::kPi * a * a *
+            (q_pole - aeris::geo::authalic_q(radians(80.0)));
+        expect_relative("north polar cap area", north_area.signed_area_m2, expected, 3e-15);
+        expect_true("north polar cap is positive left-side area", north_area.signed_area_m2 > 0.0);
+
+        auto north_complement = north.value;
+        north_complement.interior_side = aeris::geometry::RingInteriorSide::right;
+        const auto complement_area = aeris::geometry::signed_wgs84_linear_ring_area(north_complement);
+        expect_true("north complement right-side area succeeds", complement_area.ok());
+        if (complement_area.ok()) {
+            expect_relative(
+                "large complement is represented rather than forced to minor region",
+                complement_area.signed_area_m2,
+                -(surface_area - expected),
+                3e-15
+            );
+            expect_true(
+                "explicit complement may exceed a hemisphere",
+                std::abs(complement_area.signed_area_m2) > 0.5 * surface_area
+            );
+        }
+    }
+
+    auto south = make_parallel_ring(-80.0);
+    expect_true("south polar ring canonicalizes", south.ok());
+    if (!south.ok()) {
+        return;
+    }
+    south.value.interior_side = aeris::geometry::RingInteriorSide::right;
+    const auto south_area = aeris::geometry::signed_wgs84_linear_ring_area(south.value);
+    expect_true("south polar right-side area succeeds", south_area.ok());
+    if (south_area.ok()) {
+        const double expected_magnitude =
+            aeris::geo::kPi * a * a *
+            (q_pole + aeris::geo::authalic_q(radians(-80.0)));
+        expect_relative("south polar cap area", south_area.signed_area_m2, -expected_magnitude, 3e-15);
+        expect_true("south polar cap preserves clockwise/right sign", south_area.signed_area_m2 < 0.0);
+    }
 }
 
 void test_slanted_edges_use_adaptive_integral() {
@@ -187,7 +249,8 @@ int main() {
     test_antimeridian_unwrap();
     test_ambiguous_half_turn_rejected();
     test_rectangle_area_and_orientation();
-    test_nonzero_winding_fails_closed();
+    test_nonzero_winding_fails_closed_without_topology();
+    test_explicit_polar_interior_areas();
     test_slanted_edges_use_adaptive_integral();
 
     if (failures != 0) {
