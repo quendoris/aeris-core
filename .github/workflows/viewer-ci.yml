@@ -1,0 +1,97 @@
+# SPDX-FileCopyrightText: 2026 quendoris
+# SPDX-License-Identifier: AGPL-3.0-only
+
+name: Viewer CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/viewer-ci.yml
+      - viewer/**
+      - scripts/fetch_demo_world.cmake
+      - CMakeLists.txt
+      - include/aeris/**
+      - src/**
+  pull_request:
+    paths:
+      - .github/workflows/viewer-ci.yml
+      - viewer/**
+      - scripts/fetch_demo_world.cmake
+      - CMakeLists.txt
+      - include/aeris/**
+      - src/**
+
+permissions:
+  contents: read
+
+jobs:
+  linux-viewer:
+    name: Ubuntu / Qt6 Widgets viewer
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Qt6 Widgets development package
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qt6-base-dev
+
+      - name: Fetch exact pinned demo world
+        run: >-
+          cmake
+          -DDESTINATION=${{ runner.temp }}/natural-earth-v5.1.2
+          -P scripts/fetch_demo_world.cmake
+
+      - name: Configure viewer
+        run: >-
+          cmake -S . -B build-viewer
+          -DAERIS_BUILD_TESTS=OFF
+          -DAERIS_BUILD_TOOLS=OFF
+          -DAERIS_BUILD_VIEWER=ON
+          -DAERIS_WARNINGS_AS_ERRORS=ON
+          -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build viewer and probes
+        run: >-
+          cmake --build build-viewer
+          --target aeris_viewer aeris_viewer_scene_probe aeris_viewer_controller_probe
+          --parallel 2
+
+      - name: Build all real viewer scenes
+        run: >-
+          ./build-viewer/viewer/aeris_viewer_scene_probe
+          --snapshot ${{ runner.temp }}/natural-earth-v5.1.2
+
+      - name: Verify preview/cancel/verified interaction lifecycle
+        run: >-
+          ./build-viewer/viewer/aeris_viewer_controller_probe
+          --snapshot ${{ runner.temp }}/natural-earth-v5.1.2
+
+      - name: Offscreen startup smoke test
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: >-
+          ./build-viewer/viewer/aeris_viewer
+          --snapshot ${{ runner.temp }}/natural-earth-v5.1.2
+          --smoke
+
+      - name: Render verified workbench screenshot
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: >-
+          ./build-viewer/viewer/aeris_viewer
+          --snapshot ${{ runner.temp }}/natural-earth-v5.1.2
+          --render ${{ runner.temp }}/aeris-viewer-globe.png
+
+      - name: Upload viewer screenshot
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: aeris-viewer-globe
+          path: ${{ runner.temp }}/aeris-viewer-globe.png
+          if-no-files-found: error
+          retention-days: 14
