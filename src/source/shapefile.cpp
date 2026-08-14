@@ -11,7 +11,9 @@
 #include <cstdint>
 #include <cstring>
 #include <fstream>
+#include <iomanip>
 #include <limits>
+#include <sstream>
 #include <system_error>
 #include <vector>
 
@@ -91,6 +93,24 @@ static_assert(std::numeric_limits<double>::is_iec559, "AERIS Shapefile reader re
         }
     }
     return true;
+}
+
+[[nodiscard]] std::string invalid_point_diagnostic(
+    const std::uint32_t part,
+    const std::uint32_t absolute_point,
+    const std::uint32_t part_start,
+    const double longitude_deg,
+    const double latitude_deg
+) {
+    std::ostringstream output;
+    output << std::setprecision(17)
+           << "Polygon point is outside valid WGS84 longitude/latitude bounds"
+           << " [part=" << part
+           << ", part_point=" << (absolute_point - part_start)
+           << ", absolute_point=" << absolute_point
+           << ", lon_deg=" << longitude_deg
+           << ", lat_deg=" << latitude_deg << ']';
+    return output.str();
 }
 
 }  // namespace
@@ -287,7 +307,13 @@ ShapefilePolygonResult read_polygon_shapefile(const std::filesystem::path& path)
                     latitude_deg < -90.0 || latitude_deg > 90.0) {
                     result.error = ShapefileError::invalid_coordinate;
                     result.failed_record_number = record_number;
-                    result.diagnostic = "Polygon point is outside valid WGS84 longitude/latitude bounds";
+                    result.diagnostic = invalid_point_diagnostic(
+                        part,
+                        point,
+                        start,
+                        longitude_deg,
+                        latitude_deg
+                    );
                     return result;
                 }
                 source_points.push_back({
