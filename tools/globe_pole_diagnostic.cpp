@@ -8,6 +8,7 @@
 #include "aeris/view/globe_curve.hpp"
 #include "aeris/view/globe_polygon.hpp"
 
+#include <array>
 #include <charconv>
 #include <cmath>
 #include <cstddef>
@@ -131,9 +132,9 @@ int main(int argc, char** argv) {
     aeris::view::GlobeCurveOptions curve_options{};
     curve_options.geometric_tolerance_m = 5'000.0;
     curve_options.horizon_tolerance_m = 0.01;
-    curve_options.max_subdivision_depth = 28U;
+    curve_options.max_subdivision_depth = 32U;
     curve_options.max_root_iterations = 80U;
-    curve_options.max_segments = 1'000'000U;
+    curve_options.max_segments = 5'000'000U;
 
     const auto curve = aeris::view::project_visible_wgs84_linear_ring(
         ring,
@@ -156,39 +157,56 @@ int main(int argc, char** argv) {
             << " size=" << part.size()
             << " start_angle_deg=" << degrees(angle(part.front()))
             << " end_angle_deg=" << degrees(angle(part.back()))
-            << " start_x=" << part.front().x
-            << " start_y=" << part.front().y
-            << " end_x=" << part.back().x
-            << " end_y=" << part.back().y
             << '\n';
     }
 
-    aeris::view::GlobePolygonOptions polygon_options{};
-    polygon_options.curve = curve_options;
-    polygon_options.horizon_arc_tolerance_m = 500.0;
-    polygon_options.max_horizon_arc_segments = 1'000'000U;
-    polygon_options.max_output_rings = 4096U;
+    struct Refinement final {
+        double curve_m;
+        double arc_m;
+    };
+    constexpr std::array<Refinement, 8U> refinements{{
+        {5'000.0, 500.0},
+        {2'500.0, 250.0},
+        {1'000.0, 100.0},
+        {500.0, 50.0},
+        {100.0, 10.0},
+        {50.0, 5.0},
+        {25.0, 2.5},
+        {10.0, 1.0},
+    }};
 
-    const auto polygon = aeris::view::project_visible_wgs84_linear_polygon_ring(
-        ring,
-        world_to_view,
-        polygon_options,
-        radius
-    );
-    std::cout
-        << "polygon_error=" << static_cast<int>(polygon.error)
-        << " output_rings=" << polygon.rings.size()
-        << " signed_area=" << polygon.planar_signed_area_m2
-        << " crossings=" << polygon.horizon_crossings
-        << " arc_segments=" << polygon.horizon_arc_segments
-        << '\n';
-    for (std::size_t index = 0U; index < polygon.rings.size(); ++index) {
-        const auto& output = polygon.rings[index];
+    for (const Refinement refinement : refinements) {
+        aeris::view::GlobePolygonOptions polygon_options{};
+        polygon_options.curve = curve_options;
+        polygon_options.curve.geometric_tolerance_m = refinement.curve_m;
+        polygon_options.horizon_arc_tolerance_m = refinement.arc_m;
+        polygon_options.max_horizon_arc_segments = 5'000'000U;
+        polygon_options.max_output_rings = 4096U;
+
+        const auto polygon = aeris::view::project_visible_wgs84_linear_polygon_ring(
+            ring,
+            world_to_view,
+            polygon_options,
+            radius
+        );
         std::cout
-            << "output_ring=" << index
-            << " size=" << output.size()
-            << " signed_area=" << aeris::geometry::signed_planar_area(output)
+            << "refine curve_m=" << refinement.curve_m
+            << " arc_m=" << refinement.arc_m
+            << " error=" << static_cast<int>(polygon.error)
+            << " output_rings=" << polygon.rings.size()
+            << " signed_area=" << polygon.planar_signed_area_m2
+            << " crossings=" << polygon.horizon_crossings
+            << " arc_segments=" << polygon.horizon_arc_segments
+            << " vertices=" << polygon.projected_vertices
             << '\n';
+        for (std::size_t index = 0U; index < polygon.rings.size(); ++index) {
+            std::cout
+                << "  ring=" << index
+                << " size=" << polygon.rings[index].size()
+                << " signed_area="
+                << aeris::geometry::signed_planar_area(polygon.rings[index])
+                << '\n';
+        }
     }
 
     return EXIT_SUCCESS;
