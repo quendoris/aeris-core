@@ -136,8 +136,6 @@ struct Summary final {
         return false;
     }
 
-    constexpr double width = 900.0;
-    constexpr double height = 900.0;
     constexpr double center_x = 450.0;
     constexpr double center_y = 430.0;
     constexpr double screen_radius = 360.0;
