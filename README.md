@@ -10,9 +10,9 @@ The project began from a simple personal goal: make a world map worth printing a
 
 AERIS is in **early implementation**.
 
-The reference core now includes WGS84/authalic mathematics, spherical rotation, independent Sinusoidal and Mollweide primitives, canonical geographic edge/ring semantics, adaptive finite-geometry verification, projection seam handling for supported polar winding and general zero-winding rings, horizon-aware authalic orthographic globe curves, source acquisition/provenance, a strict minimal Polygon Shapefile reader, and pinned real-world whole-land integration proofs.
+The reference core now includes WGS84/authalic mathematics, spherical rotation, independent Sinusoidal and Mollweide primitives, canonical geographic edge/ring semantics, adaptive finite-geometry verification, projection seam handling for supported polar winding and general zero-winding rings, horizon-aware authalic orthographic globe curves, explicit filled visible-globe horizon topology with verified adaptive refinement, source acquisition/provenance, a strict minimal Polygon Shapefile reader, and pinned real-world whole-land integration proofs.
 
-The project format, filled visible-globe polygon topology, and final Philbrick Sinu-Mollweide composition remain drafts. No draft `.aeris` file or draft composite-projection output is promised long-term compatibility until the relevant contracts are explicitly frozen.
+The project format and final Philbrick Sinu-Mollweide composition remain drafts. No draft `.aeris` file or draft composite-projection output is promised long-term compatibility until the relevant contracts are explicitly frozen.
 
 ## Core principles
 
@@ -41,19 +41,21 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
-The normal CI gate runs on Linux, Windows, and macOS, with an additional Linux ASan/UBSan pass. It exercises authalic forward/inverse math, spherical rotations, equal-area primitives and Jacobians, canonical WGS84 ring area, adaptive subdivision, geographic seam partitioning, piecewise final area budgets, split exterior/hole semantics, horizon-aware visible globe curves and root solving, source acquisition/registry contracts, Shapefile parsing, SHA-256, Natural Earth adapter behavior, and diagnostic generation.
+The normal CI gate runs on Linux, Windows, and macOS, with an additional Linux ASan/UBSan pass. It exercises authalic forward/inverse math, spherical rotations, equal-area primitives and Jacobians, canonical WGS84 ring area, adaptive subdivision, geographic seam partitioning, piecewise final area budgets, split exterior/hole semantics, horizon-aware visible globe curves and root solving, filled-globe horizon closure, verified near-limb fill refinement, source acquisition/registry contracts, Shapefile parsing, SHA-256, Natural Earth adapter behavior, and diagnostic generation.
 
 A separate networked **Source Compatibility** workflow verifies exact pinned third-party source bytes through the production ingestion/projection/view paths without making ordinary CI depend on a live upstream service. Relevant pull requests run this proof before merge.
 
 ## First real-world milestones
 
-AERIS has successfully processed the exact pinned Natural Earth `ne_110m_land` snapshot (`v5.1.2`) through its own verification, Shapefile decoding, canonical topology, WGS84/authalic area reference, polar seam handling, adaptive projection, and final area-budget checks.
+AERIS has successfully processed the exact pinned Natural Earth `ne_110m_land` snapshot (`v5.1.2`) through its own verification, Shapefile decoding, canonical topology, WGS84/authalic area reference, polar seam handling, adaptive projection, horizon-aware globe visibility, filled visible-region topology, and final verification gates.
 
-The normal equal-area world proof covers 127 features, 128 rings, and 5015 source vertices, including the winding Antarctic exterior ring. A second pass moves the projection central meridian to `+90°`, forcing the same real source geometry through the general zero-winding seam splitter: 5 source rings are split across 14 physical seam crossings into a total of 135 planar pieces. Both Sinusoidal and Mollweide remain inside the original-ring aggregate area budgets.
+The normal equal-area world proof covers 127 features, 128 rings, and 5015 source vertices, including the winding Antarctic exterior ring. A second pass moves the projection central meridian to `+90°`, forcing the same real source geometry through the general zero-winding seam splitter: 5 source rings are split across 14 physical seam crossings into 135 planar pieces. Both Sinusoidal and Mollweide remain inside the original-ring aggregate area budgets.
 
-The same pinned coastline geometry also passes the authalic orthographic globe horizon path. With a camera centered at `15°E, 20°N` geodetic, the reference wireframe produces 66 visible source rings, 74 visible fragments, 26 sign-changing horizon crossings, and 2764 projected vertices. Horizon endpoints are solved from the geographic source edges before SVG output; the diagnostic does not manufacture coastline termination with a circular clip path and deliberately does not fill land until horizon-arc polygon topology is specified.
+The same pinned geometry also passes the authalic orthographic globe path. With a camera centered at `15°E, 20°N` geodetic, the wireframe reference produces 66 visible source rings, 74 visible fragments, 26 sign-changing horizon crossings, and 2764 projected vertices. Horizon endpoints are solved from canonical geographic edges before SVG output; coastline termination is not manufactured with a circular clip path.
 
-See [Real-World Conformance Proofs](docs/REAL-WORLD-CONFORMANCE.md) for exact resource SHA-256 identities and measured integration evidence, [Projection Seam Topology](docs/PROJECTION-SEAM-TOPOLOGY.md) for planar cut semantics, and [Globe Horizon Topology](docs/GLOBE-HORIZON-TOPOLOGY.md) for the visible-globe reference contract and its explicit numerical non-claims.
+The verified filled-globe proof starts deliberately coarse at `5000 m` curve tolerance and `500 m` horizon-arc tolerance, then adaptively proves each source ring rather than using a fixed special-case quality setting. The accepted world contains 71 closed fill rings and 3078 fill vertices; the most difficult real ring required 12 refinement rounds and reached approximately `2.441 m` curve tolerance and `0.244 m` limb-arc tolerance. The final diagnostic uses 71 explicit closed land subpaths, 74 independently recomputed open coastline paths, and zero SVG `clipPath` elements.
+
+See [Real-World Conformance Proofs](docs/REAL-WORLD-CONFORMANCE.md) for exact resource SHA-256 identities and measured integration evidence, [Projection Seam Topology](docs/PROJECTION-SEAM-TOPOLOGY.md) for planar cut semantics, and [Globe Horizon Topology](docs/GLOBE-HORIZON-TOPOLOGY.md) for the curve/fill/verification contract and its explicit numerical non-claims.
 
 ## Planned project and export formats
 

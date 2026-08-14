@@ -11,6 +11,7 @@ on:
       - compat/natural-earth/**
       - tools/real_world_probe.cpp
       - tools/real_world_globe_probe.cpp
+      - tools/real_world_globe_fill_probe.cpp
       - tools/shapefile_projection_probe.cpp
       - CMakeLists.txt
       - include/aeris/source/**
@@ -27,6 +28,7 @@ on:
       - compat/natural-earth/**
       - tools/real_world_probe.cpp
       - tools/real_world_globe_probe.cpp
+      - tools/real_world_globe_fill_probe.cpp
       - tools/shapefile_projection_probe.cpp
       - CMakeLists.txt
       - include/aeris/source/**
@@ -73,7 +75,7 @@ jobs:
             -DAERIS_WARNINGS_AS_ERRORS=ON \
             -DCMAKE_BUILD_TYPE=Release
           cmake --build build-compat \
-            --target aeris_real_world_probe aeris_real_world_globe_probe aeris_shapefile_projection_probe \
+            --target aeris_real_world_probe aeris_real_world_globe_probe aeris_real_world_globe_fill_probe aeris_shapefile_projection_probe \
             --parallel 2
 
       - name: Diagnose projection convergence
@@ -113,6 +115,18 @@ jobs:
             "$root/ne_110m_land.shp" \
             "$RUNNER_TEMP/aeris-natural-earth-v5.1.2-globe.svg"
 
+      - name: Verify real-world filled globe topology
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/natural-earth-v5.1.2"
+          retrieved_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          ./build-compat/aeris_real_world_globe_fill_probe \
+            "$root" \
+            compat/natural-earth/ne_110m_land-v5.1.2 \
+            "$RUNNER_TEMP/aeris-natural-earth-v5.1.2-globe-filled.svg" \
+            "$retrieved_at"
+
       - name: Upload diagnostic SVGs
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -120,5 +134,6 @@ jobs:
           path: |
             ${{ runner.temp }}/aeris-natural-earth-v5.1.2.svg
             ${{ runner.temp }}/aeris-natural-earth-v5.1.2-globe.svg
+            ${{ runner.temp }}/aeris-natural-earth-v5.1.2-globe-filled.svg
           if-no-files-found: error
           retention-days: 14
