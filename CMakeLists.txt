@@ -57,6 +57,12 @@ if(AERIS_BUILD_TOOLS)
     target_compile_features(aeris_real_world_probe PRIVATE cxx_std_17)
     set_target_properties(aeris_real_world_probe PROPERTIES CXX_EXTENSIONS OFF)
     aeris_enable_warnings(aeris_real_world_probe)
+
+    add_executable(aeris_shapefile_projection_probe tools/shapefile_projection_probe.cpp)
+    target_link_libraries(aeris_shapefile_projection_probe PRIVATE AERIS::core)
+    target_compile_features(aeris_shapefile_projection_probe PRIVATE cxx_std_17)
+    set_target_properties(aeris_shapefile_projection_probe PROPERTIES CXX_EXTENSIONS OFF)
+    aeris_enable_warnings(aeris_shapefile_projection_probe)
 endif()
 
 if(AERIS_BUILD_TESTS)
