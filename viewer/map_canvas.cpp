@@ -129,6 +129,12 @@ void MapCanvas::paintEvent(QPaintEvent*) {
             for (std::size_t index = 1U; index < line.size(); ++index) {
                 path.lineTo(line[index].x, line[index].y);
             }
+            // Globe coastline fragments are intentionally open at the limb.
+            // Flat-view outlines are derived closed projection rings and must
+            // retain the final closing segment in the UI as well as in fill.
+            if (scene_.mode != ViewMode::globe && line.size() >= 3U) {
+                path.closeSubpath();
+            }
             painter.drawPath(path);
         }
     }
