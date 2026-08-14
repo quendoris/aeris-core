@@ -5,6 +5,7 @@
 
 #include "aeris/source/adapter.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <string>
@@ -41,6 +42,7 @@ struct ShapefilePolygonResult final {
     ShapefileError error = ShapefileError::none;
     geometry::GeographicError geographic_error = geometry::GeographicError::none;
     std::uint32_t failed_record_number = 0U;
+    std::size_t normalized_boundary_coordinates = 0U;
     std::string diagnostic;
 
     [[nodiscard]] bool ok() const noexcept {
