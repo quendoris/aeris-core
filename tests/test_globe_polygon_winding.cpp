@@ -123,9 +123,6 @@ int main() {
         return EXIT_FAILURE;
     }
 
-    // Use 60 S here intentionally. With a 20 N camera, 70 S is exactly on
-    // the great-circle horizon along the central meridian and would test a
-    // tangent contact rather than a genuine visible/hidden intersection.
     const std::vector<aeris::geometry::GeodeticPoint> single_pole_touch{
         {radians(-180.0), radians(-60.0)},
         {radians(-120.0), radians(-60.0)},
@@ -143,17 +140,22 @@ int main() {
         return EXIT_FAILURE;
     }
 
-    const std::vector<aeris::geometry::GeodeticPoint> repeated_pole_run{
+    // Natural Earth v5.1.2 contains the South Pole twice consecutively in
+    // its Antarctic exterior. The duplicate is exactly equal in canonical
+    // longitude and latitude, so this fixture isolates a true zero-length
+    // source edge without changing either adjacent edge.
+    const std::vector<aeris::geometry::GeodeticPoint> duplicate_pole_vertex{
         {radians(-180.0), radians(-60.0)},
         {radians(-120.0), radians(-60.0)},
-        {radians(-60.0), radians(-90.0)},
+        {radians(-60.0), radians(-60.0)},
         {radians(0.0), radians(-90.0)},
-        {radians(60.0), radians(-90.0)},
+        {radians(0.0), radians(-90.0)},
+        {radians(60.0), radians(-60.0)},
         {radians(120.0), radians(-60.0)},
     };
     if (!run_case(
-            "repeated exact-pole longitudes",
-            repeated_pole_run,
+            "duplicate exact-pole vertex",
+            duplicate_pole_vertex,
             camera,
             false
         )) {
