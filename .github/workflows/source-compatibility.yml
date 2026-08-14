@@ -10,6 +10,7 @@ on:
       - .github/workflows/source-compatibility.yml
       - compat/natural-earth/**
       - tools/real_world_probe.cpp
+      - tools/shapefile_projection_probe.cpp
       - CMakeLists.txt
       - include/aeris/source/**
       - src/source/**
@@ -43,7 +44,7 @@ jobs:
               --output "$root/$file" "$base/$file"
           done
 
-      - name: Build integration probe
+      - name: Build integration probes
         shell: bash
         run: |
           set -euo pipefail
@@ -52,7 +53,17 @@ jobs:
             -DAERIS_BUILD_TOOLS=ON \
             -DAERIS_WARNINGS_AS_ERRORS=ON \
             -DCMAKE_BUILD_TYPE=Release
-          cmake --build build-compat --target aeris_real_world_probe --parallel 2
+          cmake --build build-compat \
+            --target aeris_real_world_probe aeris_shapefile_projection_probe \
+            --parallel 2
+
+      - name: Diagnose projection convergence
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/natural-earth-v5.1.2"
+          ./build-compat/aeris_shapefile_projection_probe \
+            "$root/ne_110m_land.shp" 3 0
 
       - name: Verify, normalize, project, and render
         shell: bash
