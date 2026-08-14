@@ -39,7 +39,8 @@ void expect_true(const std::string_view name, const bool condition) {
 void check_verified_projection(
     const aeris::geometry::LinearRing& ring,
     const aeris::projection::EqualAreaPrimitive primitive,
-    const double central_meridian
+    const double central_meridian,
+    const unsigned max_rounds = 10U
 ) {
     aeris::projection::RingProjectionOptions options{};
     options.primitive = primitive;
@@ -48,7 +49,7 @@ void check_verified_projection(
     options.absolute_area_tolerance_m2 = 1.0;
     options.initial_geometric_tolerance_m = 8.0;
     options.initial_local_area_tolerance_m2 = 1024.0;
-    options.max_refinement_rounds = 10U;
+    options.max_refinement_rounds = max_rounds;
 
     const auto result = aeris::projection::project_wgs84_linear_ring_verified(
         ring,
@@ -117,6 +118,31 @@ void test_antimeridian_ring_budget() {
     );
 }
 
+void test_south_polar_seam_closure_budget() {
+    auto ring = make_ring({
+        {radians(-180.0), radians(-80.0)},
+        {radians(-90.0), radians(-80.0)},
+        {radians(0.0), radians(-80.0)},
+        {radians(90.0), radians(-80.0)},
+        {radians(180.0), radians(-80.0)},
+    });
+    ring.interior_side = aeris::geometry::RingInteriorSide::right;
+
+    expect_true("south polar fixture has positive longitude winding", ring.longitude_winding == 1);
+    check_verified_projection(
+        ring,
+        aeris::projection::EqualAreaPrimitive::sinusoidal,
+        0.0,
+        16U
+    );
+    check_verified_projection(
+        ring,
+        aeris::projection::EqualAreaPrimitive::mollweide,
+        0.0,
+        16U
+    );
+}
+
 void test_impossible_budget_fails_closed() {
     const auto ring = make_ring({
         {radians(-35.0), radians(-20.0)},
@@ -174,6 +200,7 @@ void test_orientation_is_preserved() {
 int main() {
     test_oblique_ring_budget();
     test_antimeridian_ring_budget();
+    test_south_polar_seam_closure_budget();
     test_impossible_budget_fails_closed();
     test_orientation_is_preserved();
 
