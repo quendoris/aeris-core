@@ -6,6 +6,7 @@ project(aeris VERSION 0.1.0 DESCRIPTION "Authalic Equal-area Rendering & Ingesti
 
 option(AERIS_BUILD_TESTS "Build AERIS tests" ON)
 option(AERIS_BUILD_TOOLS "Build AERIS development tools" ON)
+option(AERIS_BUILD_VIEWER "Build the optional Qt Widgets AERIS viewer" OFF)
 option(AERIS_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" OFF)
 
 function(aeris_enable_warnings target_name)
@@ -80,6 +81,10 @@ if(AERIS_BUILD_TOOLS)
     target_compile_features(aeris_shapefile_projection_probe PRIVATE cxx_std_17)
     set_target_properties(aeris_shapefile_projection_probe PROPERTIES CXX_EXTENSIONS OFF)
     aeris_enable_warnings(aeris_shapefile_projection_probe)
+endif()
+
+if(AERIS_BUILD_VIEWER)
+    add_subdirectory(viewer)
 endif()
 
 if(AERIS_BUILD_TESTS)
