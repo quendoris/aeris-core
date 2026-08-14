@@ -143,6 +143,35 @@ void test_south_polar_seam_closure_budget() {
     );
 }
 
+void test_south_polar_rebase_from_arbitrary_start_budget() {
+    auto ring = make_ring({
+        {radians(-60.0), radians(-80.0)},
+        {radians(30.0), radians(-80.0)},
+        {radians(120.0), radians(-80.0)},
+        {radians(-150.0), radians(-80.0)},
+    });
+    ring.interior_side = aeris::geometry::RingInteriorSide::right;
+
+    expect_true("rebased south polar fixture winds once", ring.longitude_winding == 1);
+    expect_true(
+        "fixture intentionally does not begin at projection seam",
+        std::abs(std::abs(ring.vertices.front().longitude_rad) - aeris::geo::kPi) > 1e-6
+    );
+
+    check_verified_projection(
+        ring,
+        aeris::projection::EqualAreaPrimitive::sinusoidal,
+        0.0,
+        16U
+    );
+    check_verified_projection(
+        ring,
+        aeris::projection::EqualAreaPrimitive::mollweide,
+        0.0,
+        16U
+    );
+}
+
 void test_impossible_budget_fails_closed() {
     const auto ring = make_ring({
         {radians(-35.0), radians(-20.0)},
@@ -201,6 +230,7 @@ int main() {
     test_oblique_ring_budget();
     test_antimeridian_ring_budget();
     test_south_polar_seam_closure_budget();
+    test_south_polar_rebase_from_arbitrary_start_budget();
     test_impossible_budget_fails_closed();
     test_orientation_is_preserved();
 
