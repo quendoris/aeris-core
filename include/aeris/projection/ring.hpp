@@ -20,6 +20,7 @@ enum class RingProjectionError {
     subdivision_failed,
     non_finite_planar_area,
     area_budget_unmet,
+    unsupported_seam_topology,
 };
 
 struct RingProjectionOptions final {
