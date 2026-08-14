@@ -27,6 +27,7 @@ constexpr std::uint32_t kPolygonShape = 5U;
 constexpr std::size_t kMainHeaderBytes = 100U;
 constexpr std::size_t kRecordHeaderBytes = 8U;
 constexpr double kDegreesToRadians = geo::kPi / 180.0;
+constexpr unsigned kBoundaryRoundoffUlps = 8U;
 
 static_assert(sizeof(double) == 8U, "AERIS Shapefile reader requires 64-bit double");
 static_assert(std::numeric_limits<double>::is_iec559, "AERIS Shapefile reader requires IEEE-754 double");
@@ -93,6 +94,45 @@ static_assert(std::numeric_limits<double>::is_iec559, "AERIS Shapefile reader re
         }
     }
     return true;
+}
+
+struct BoundedCoordinate final {
+    double value = 0.0;
+    bool valid = false;
+    bool normalized = false;
+};
+
+[[nodiscard]] BoundedCoordinate canonicalize_boundary_roundoff(
+    const double value,
+    const double lower,
+    const double upper
+) noexcept {
+    if (!std::isfinite(value)) {
+        return {value, false, false};
+    }
+    if (value >= lower && value <= upper) {
+        return {value, true, false};
+    }
+
+    if (value > upper) {
+        double outward_limit = upper;
+        for (unsigned step = 0U; step < kBoundaryRoundoffUlps; ++step) {
+            outward_limit = std::nextafter(outward_limit, std::numeric_limits<double>::infinity());
+        }
+        if (value <= outward_limit) {
+            return {upper, true, true};
+        }
+    } else {
+        double outward_limit = lower;
+        for (unsigned step = 0U; step < kBoundaryRoundoffUlps; ++step) {
+            outward_limit = std::nextafter(outward_limit, -std::numeric_limits<double>::infinity());
+        }
+        if (value >= outward_limit) {
+            return {lower, true, true};
+        }
+    }
+
+    return {value, false, false};
 }
 
 [[nodiscard]] std::string invalid_point_diagnostic(
@@ -300,25 +340,38 @@ ShapefilePolygonResult read_polygon_shapefile(const std::filesystem::path& path)
             source_points.reserve(static_cast<std::size_t>(end - start));
             for (std::uint32_t point = start; point < end; ++point) {
                 const std::size_t offset = points_offset + static_cast<std::size_t>(point) * 16U;
-                const double longitude_deg = le_f64(content.data() + offset);
-                const double latitude_deg = le_f64(content.data() + offset + 8U);
-                if (!std::isfinite(longitude_deg) || !std::isfinite(latitude_deg) ||
-                    longitude_deg < -180.0 || longitude_deg > 180.0 ||
-                    latitude_deg < -90.0 || latitude_deg > 90.0) {
+                const double raw_longitude_deg = le_f64(content.data() + offset);
+                const double raw_latitude_deg = le_f64(content.data() + offset + 8U);
+
+                const BoundedCoordinate longitude = canonicalize_boundary_roundoff(
+                    raw_longitude_deg,
+                    -180.0,
+                    180.0
+                );
+                const BoundedCoordinate latitude = canonicalize_boundary_roundoff(
+                    raw_latitude_deg,
+                    -90.0,
+                    90.0
+                );
+                if (!longitude.valid || !latitude.valid) {
                     result.error = ShapefileError::invalid_coordinate;
                     result.failed_record_number = record_number;
                     result.diagnostic = invalid_point_diagnostic(
                         part,
                         point,
                         start,
-                        longitude_deg,
-                        latitude_deg
+                        raw_longitude_deg,
+                        raw_latitude_deg
                     );
                     return result;
                 }
+
+                result.normalized_boundary_coordinates +=
+                    static_cast<std::size_t>(longitude.normalized) +
+                    static_cast<std::size_t>(latitude.normalized);
                 source_points.push_back({
-                    longitude_deg * kDegreesToRadians,
-                    latitude_deg * kDegreesToRadians,
+                    longitude.value * kDegreesToRadians,
+                    latitude.value * kDegreesToRadians,
                 });
             }
 
