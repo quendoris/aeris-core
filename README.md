@@ -12,6 +12,8 @@ AERIS is in **early implementation**.
 
 The reference core now includes WGS84/authalic mathematics, spherical rotation, independent Sinusoidal and Mollweide primitives, canonical geographic edge/ring semantics, adaptive finite-geometry verification, projection seam handling for supported polar winding and general zero-winding rings, horizon-aware authalic orthographic globe curves, explicit filled visible-globe horizon topology with verified adaptive refinement, source acquisition/provenance, a strict minimal Polygon Shapefile reader, and pinned real-world whole-land integration proofs.
 
+An optional Qt 6 Widgets viewer is now under active development as a separate frontend over the Qt-free reference core. The current viewer can load the exact pinned Natural Earth demo snapshot, show a verified filled authalic globe, rotate the globe interactively through an explicit wireframe preview state, and switch to verified Sinusoidal or Mollweide flat views. The visual `Unfold` transition is deliberately disabled until its interpolation semantics receive a separate stable contract.
+
 The project format and final Philbrick Sinu-Mollweide composition remain drafts. No draft `.aeris` file or draft composite-projection output is promised long-term compatibility until the relevant contracts are explicitly frozen.
 
 ## Core principles
@@ -31,9 +33,9 @@ The project format and final Philbrick Sinu-Mollweide composition remain drafts.
 
 The reference core is written in portable **C++17** and built with CMake. Core mathematics has no Qt, Python, GIS-framework, GPU, or network runtime dependency.
 
-AERIS intentionally keeps the future UI/toolkit layer outside the mathematical and project-model contracts. The GUI may evolve; historical project files and reference mathematics must remain independently readable and testable.
+AERIS intentionally keeps the UI/toolkit layer outside the mathematical and project-model contracts. The GUI may evolve; historical project files and reference mathematics must remain independently readable and testable.
 
-### Build and test
+### Build and test the core
 
 ```sh
 cmake -S . -B build -DAERIS_BUILD_TESTS=ON
@@ -44,6 +46,75 @@ ctest --test-dir build --output-on-failure
 The normal CI gate runs on Linux, Windows, and macOS, with an additional Linux ASan/UBSan pass. It exercises authalic forward/inverse math, spherical rotations, equal-area primitives and Jacobians, canonical WGS84 ring area, adaptive subdivision, geographic seam partitioning, piecewise final area budgets, split exterior/hole semantics, horizon-aware visible globe curves and root solving, filled-globe horizon closure, verified near-limb fill refinement, source acquisition/registry contracts, Shapefile parsing, SHA-256, Natural Earth adapter behavior, and diagnostic generation.
 
 A separate networked **Source Compatibility** workflow verifies exact pinned third-party source bytes through the production ingestion/projection/view paths without making ordinary CI depend on a live upstream service. Relevant pull requests run this proof before merge.
+
+## Interactive viewer
+
+The first AERIS viewer is an **optional Qt 6 Widgets frontend**. Building it does not make Qt a dependency of `aeris_core`; `AERIS_BUILD_VIEWER` is `OFF` by default.
+
+The current viewer intentionally exposes the distinction between interactive preview and mathematically verified geometry:
+
+- while the globe is dragged, the canvas shows a horizon-aware **PREVIEW** wireframe;
+- when the drag ends, the stale verified job is canceled/ignored and the new camera is recomputed in the background through the verified filled-globe path;
+- only the completed result is marked **VERIFIED**;
+- Sinusoidal and Mollweide views use the verified piecewise equal-area path;
+- the disabled `Unfold` control is a visible promise of future functionality, not a placeholder that silently interpolates incompatible geometry.
+
+### Fetch the exact demo world
+
+The viewer never silently downloads map data. Fetch the exact pinned Natural Earth bytes explicitly:
+
+```sh
+cmake \
+  -DDESTINATION=dev-data/natural-earth-v5.1.2 \
+  -P scripts/fetch_demo_world.cmake
+```
+
+The script validates the exact SHA-256 of every downloaded resource. The viewer verifies the resource manifest and aggregate content identity again before loading the adapter.
+
+### Configure and build the viewer
+
+A C++17 compiler, CMake, and the Qt 6 Widgets development package are required for this optional target.
+
+```sh
+cmake -S . -B build-viewer \
+  -DAERIS_BUILD_VIEWER=ON \
+  -DAERIS_BUILD_TESTS=OFF \
+  -DAERIS_BUILD_TOOLS=OFF \
+  -DCMAKE_BUILD_TYPE=Release
+
+cmake --build build-viewer --target aeris_viewer
+```
+
+### Run
+
+From the repository root:
+
+```sh
+./build-viewer/viewer/aeris_viewer
+```
+
+The default verified demo snapshot is expected at:
+
+```text
+dev-data/natural-earth-v5.1.2
+```
+
+A different local path containing the exact same pinned resources can be selected explicitly:
+
+```sh
+./build-viewer/viewer/aeris_viewer --snapshot /path/to/natural-earth-v5.1.2
+```
+
+Current controls:
+
+- **Globe** — verified authalic orthographic globe;
+- **left-drag** — rotate globe; movement is explicit wireframe preview, release triggers verified fill recomputation;
+- **mouse wheel** — zoom;
+- **Sin** — verified Sinusoidal flat world;
+- **Moll** — verified Mollweide flat world;
+- **Unfold** — intentionally disabled until the animation/interpolation contract is implemented.
+
+The dedicated Viewer CI uses exact pinned source bytes and verifies three real scenes, preview/cancel/verified job ordering, offscreen startup, and a complete rendered workbench screenshot.
 
 ## First real-world milestones
 
