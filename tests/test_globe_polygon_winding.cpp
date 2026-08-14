@@ -123,13 +123,16 @@ int main() {
         return EXIT_FAILURE;
     }
 
+    // Use 60 S here intentionally. With a 20 N camera, 70 S is exactly on
+    // the great-circle horizon along the central meridian and would test a
+    // tangent contact rather than a genuine visible/hidden intersection.
     const std::vector<aeris::geometry::GeodeticPoint> single_pole_touch{
-        {radians(-180.0), radians(-70.0)},
-        {radians(-120.0), radians(-70.0)},
-        {radians(-60.0), radians(-70.0)},
+        {radians(-180.0), radians(-60.0)},
+        {radians(-120.0), radians(-60.0)},
+        {radians(-60.0), radians(-60.0)},
         {radians(0.0), radians(-90.0)},
-        {radians(60.0), radians(-70.0)},
-        {radians(120.0), radians(-70.0)},
+        {radians(60.0), radians(-60.0)},
+        {radians(120.0), radians(-60.0)},
     };
     if (!run_case(
             "single exact-pole touch",
@@ -141,12 +144,12 @@ int main() {
     }
 
     const std::vector<aeris::geometry::GeodeticPoint> repeated_pole_run{
-        {radians(-180.0), radians(-70.0)},
-        {radians(-120.0), radians(-70.0)},
+        {radians(-180.0), radians(-60.0)},
+        {radians(-120.0), radians(-60.0)},
         {radians(-60.0), radians(-90.0)},
         {radians(0.0), radians(-90.0)},
         {radians(60.0), radians(-90.0)},
-        {radians(120.0), radians(-70.0)},
+        {radians(120.0), radians(-60.0)},
     };
     if (!run_case(
             "repeated exact-pole longitudes",
