@@ -7,7 +7,7 @@ project(aeris VERSION 0.1.0 DESCRIPTION "Authalic Equal-area Rendering & Ingesti
 option(AERIS_BUILD_TESTS "Build AERIS tests" ON)
 option(AERIS_BUILD_TOOLS "Build AERIS development tools" ON)
 # Storage remains an opt-in native layer: SQLite is private to AERIS::storage,
-# so mathematical/reference and headless builds do not acquire it transitively.
+# and even project provenance uses storage-native DTOs rather than core/source types.
 option(AERIS_BUILD_STORAGE "Build SQLite-backed AERIS project/session storage" OFF)
 # Keep the GUI opt-in so the reference core never acquires a transitive Qt
 # requirement merely because a frontend exists in the same repository.
