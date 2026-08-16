@@ -113,6 +113,13 @@ Status validate_ring(const GeographicRingRecord& ring, const bool require_canoni
     if (!(first_longitude > -kPi && first_longitude <= kPi)) {
         return {StorageError::invalid_argument, "geographic ring first longitude is not in canonical (-pi,pi] form"};
     }
+    if (ring.vertices.size() >= 4U &&
+        ring.vertices.back().latitude_rad == ring.vertices.front().latitude_rad &&
+        std::remainder(
+            ring.vertices.back().longitude_rad - ring.vertices.front().longitude_rad,
+            kTwoPi) == 0.0) {
+        return {StorageError::invalid_argument, "geographic ring contains a duplicate terminal closing vertex"};
+    }
 
     for (std::size_t index = 1U; index < ring.vertices.size(); ++index) {
         const double delta =
@@ -133,10 +140,13 @@ Status validate_ring(const GeographicRingRecord& ring, const bool require_canoni
     if (!std::isfinite(turns)) {
         return {StorageError::invalid_argument, "geographic ring winding relation is non-finite"};
     }
-    const long long rounded_turns = std::llround(turns);
+    const double rounded_turns = std::round(turns);
     constexpr double winding_tolerance = 256.0 * std::numeric_limits<double>::epsilon();
-    if (std::abs(turns - static_cast<double>(rounded_turns)) > winding_tolerance ||
-        rounded_turns != static_cast<long long>(ring.longitude_winding)) {
+    if (!std::isfinite(rounded_turns) ||
+        std::abs(turns - rounded_turns) > winding_tolerance ||
+        rounded_turns < static_cast<double>(std::numeric_limits<std::int32_t>::min()) ||
+        rounded_turns > static_cast<double>(std::numeric_limits<std::int32_t>::max()) ||
+        rounded_turns != static_cast<double>(ring.longitude_winding)) {
         return {StorageError::invalid_argument, "geographic ring closing longitude disagrees with longitude winding"};
     }
     return Status::success();
