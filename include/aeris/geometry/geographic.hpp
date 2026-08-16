@@ -24,6 +24,7 @@ enum class GeographicError {
     invalid_options,
     numerical_domain_error,
     integration_limit_exceeded,
+    noncanonical_ring,
 };
 
 // A closed curve on a sphere separates two valid regions. For ordinary local
@@ -81,6 +82,14 @@ struct GeographicAreaResult final {
 ) {
     return canonicalize_wgs84_linear_ring(points.data(), points.size());
 }
+
+// Verifies the invariants of an already-canonical ring without rebuilding it.
+// This is intentionally distinct from canonicalize_wgs84_linear_ring(): the
+// constructor uses accumulated binary64 arithmetic, so bitwise idempotence of a
+// second construction pass is not itself a canonicality requirement.
+[[nodiscard]] GeographicError validate_canonical_wgs84_linear_ring(
+    const LinearRing& ring
+) noexcept;
 
 [[nodiscard]] GeodeticPoint interpolate_wgs84_linear_edge(
     GeodeticPoint start,
