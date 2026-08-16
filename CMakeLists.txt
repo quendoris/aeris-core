@@ -36,6 +36,7 @@ add_library(aeris_core STATIC
     src/geo/rotation.cpp
     src/geo/wgs84.cpp
     src/geometry/geographic.cpp
+    src/geometry/geographic_validate.cpp
     src/geometry/planar.cpp
     src/projection/primitives.cpp
     src/projection/ring.cpp
