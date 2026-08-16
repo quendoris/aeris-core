@@ -123,6 +123,12 @@ SourceBridgeResult record_verified_source_snapshot(
             stored.status.diagnostic.empty() ? "project storage rejected verified source provenance" : stored.status.diagnostic
         );
         result.storage_error = stored.status.error;
+        // A storage error after SQLite commit (for example, failure to refresh
+        // the caller's open ProjectStore metadata) must not erase the durable
+        // outcome. Recovery logic needs to know that the mutation is already
+        // present on disk even though the overall operation returned an error.
+        result.inserted = stored.inserted;
+        result.durably_committed = stored.durably_committed;
         return result;
     }
 
