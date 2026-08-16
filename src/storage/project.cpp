@@ -143,7 +143,9 @@ Status validate_identity(sqlite3* db) {
 Status validate_schema_surface(sqlite3* db) {
     for (const char* sql : {
              "SELECT source_id,adapter_id,capability_bits,temporal_class,provider,dataset,snapshot,dataset_version,source_uri,license_id,content_sha256,retrieved_at_utc,worldview FROM aeris_source LIMIT 0;",
-             "SELECT source_id,logical_name,sha256,size_bytes FROM aeris_source_resource LIMIT 0;"}) {
+             "SELECT source_id,logical_name,sha256,size_bytes FROM aeris_source_resource LIMIT 0;",
+             "SELECT source_id,feature_id,source_feature_id FROM aeris_source_feature LIMIT 0;",
+             "SELECT source_id,feature_id,ring_index,role,interior_side,closing_longitude_rad,longitude_winding,vertex_count,vertices_le_f64 FROM aeris_source_ring LIMIT 0;"}) {
         detail::StmtPtr stmt;
         Status status = detail::prepare(db, sql, stmt);
         if (!status) return {StorageError::schema_invalid, "required project schema surface is missing: " + status.diagnostic};
@@ -329,7 +331,7 @@ ProjectStoreResult ProjectStore::create(const std::filesystem::path& path, const
 
     const char* schema =
         "PRAGMA application_id=1095062089;"
-        "PRAGMA user_version=2;"
+        "PRAGMA user_version=3;"
         "CREATE TABLE aeris_meta("
         "id INTEGER PRIMARY KEY CHECK(id=1),"
         "project_uuid TEXT NOT NULL,"
@@ -365,6 +367,26 @@ ProjectStoreResult ProjectStore::create(const std::filesystem::path& path, const
         "sha256 TEXT NOT NULL,"
         "size_bytes INTEGER CHECK(size_bytes IS NULL OR size_bytes>=0),"
         "PRIMARY KEY(source_id,logical_name)"
+        ");"
+        "CREATE TABLE aeris_source_feature("
+        "source_id TEXT NOT NULL REFERENCES aeris_source(source_id) ON DELETE CASCADE,"
+        "feature_id TEXT NOT NULL,"
+        "source_feature_id TEXT NOT NULL,"
+        "PRIMARY KEY(source_id,feature_id)"
+        ");"
+        "CREATE TABLE aeris_source_ring("
+        "source_id TEXT NOT NULL,"
+        "feature_id TEXT NOT NULL,"
+        "ring_index INTEGER NOT NULL CHECK(ring_index>=0),"
+        "role INTEGER NOT NULL CHECK(role IN (0,1)),"
+        "interior_side INTEGER NOT NULL CHECK(interior_side IN (0,1,2)),"
+        "closing_longitude_rad REAL NOT NULL,"
+        "longitude_winding INTEGER NOT NULL CHECK(longitude_winding>=-2147483648 AND longitude_winding<=2147483647),"
+        "vertex_count INTEGER NOT NULL CHECK(vertex_count>=3),"
+        "vertices_le_f64 BLOB NOT NULL,"
+        "PRIMARY KEY(source_id,feature_id,ring_index),"
+        "FOREIGN KEY(source_id,feature_id) REFERENCES aeris_source_feature(source_id,feature_id) ON DELETE CASCADE,"
+        "CHECK(length(vertices_le_f64)=vertex_count*16)"
         ");";
     status = detail::exec(staged_db.get(), schema);
     if (!status) {
