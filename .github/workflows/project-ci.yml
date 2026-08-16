@@ -1,0 +1,123 @@
+# SPDX-FileCopyrightText: 2026 quendoris
+# SPDX-License-Identifier: AGPL-3.0-only
+
+name: Project CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'CMakeLists.txt'
+      - 'include/aeris/project/**'
+      - 'src/project/**'
+      - 'include/aeris/source/**'
+      - 'src/source/**'
+      - 'include/aeris/storage/**'
+      - 'src/storage/**'
+      - 'tests/CMakeLists.txt'
+      - 'tests/test_project_source_bridge.cpp'
+      - '.github/workflows/project-ci.yml'
+  pull_request:
+    paths:
+      - 'CMakeLists.txt'
+      - 'include/aeris/project/**'
+      - 'src/project/**'
+      - 'include/aeris/source/**'
+      - 'src/source/**'
+      - 'include/aeris/storage/**'
+      - 'src/storage/**'
+      - 'tests/CMakeLists.txt'
+      - 'tests/test_project_source_bridge.cpp'
+      - '.github/workflows/project-ci.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.os }} / project bridge
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install SQLite development package (Ubuntu)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
+
+      - name: Install SQLite development package (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install sqlite
+          echo "CMAKE_PREFIX_PATH=$(brew --prefix sqlite)" >> "$GITHUB_ENV"
+
+      - name: Install SQLite development package (Windows)
+        if: runner.os == 'Windows'
+        run: vcpkg install sqlite3:x64-windows
+
+      - name: Configure (Unix)
+        if: runner.os != 'Windows'
+        run: >-
+          cmake -S . -B build-project
+          -DAERIS_BUILD_STORAGE=ON
+          -DAERIS_BUILD_PROJECT=ON
+          -DAERIS_BUILD_TESTS=ON
+          -DAERIS_BUILD_TOOLS=OFF
+          -DAERIS_WARNINGS_AS_ERRORS=ON
+          -DCMAKE_BUILD_TYPE=Release
+
+      - name: Configure (Windows)
+        if: runner.os == 'Windows'
+        run: >-
+          cmake -S . -B build-project
+          -DAERIS_BUILD_STORAGE=ON
+          -DAERIS_BUILD_PROJECT=ON
+          -DAERIS_BUILD_TESTS=ON
+          -DAERIS_BUILD_TOOLS=OFF
+          -DAERIS_WARNINGS_AS_ERRORS=ON
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake
+          -DVCPKG_TARGET_TRIPLET=x64-windows
+
+      - name: Build project bridge contract test
+        run: cmake --build build-project --target aeris_test_project_source_bridge --config Release --parallel 2
+
+      - name: Test project bridge contract
+        run: ctest --test-dir build-project --build-config Release --output-on-failure -R '^project_source_bridge$'
+
+  sanitizers:
+    name: Linux / project bridge ASan + UBSan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install SQLite development package
+        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
+
+      - name: Configure
+        run: >-
+          cmake -S . -B build-project-sanitize
+          -DAERIS_BUILD_STORAGE=ON
+          -DAERIS_BUILD_PROJECT=ON
+          -DAERIS_BUILD_TESTS=ON
+          -DAERIS_BUILD_TOOLS=OFF
+          -DAERIS_WARNINGS_AS_ERRORS=ON
+          -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_CXX_FLAGS=-fsanitize=address,undefined\ -fno-omit-frame-pointer
+          -DCMAKE_EXE_LINKER_FLAGS=-fsanitize=address,undefined
+
+      - name: Build project bridge contract test
+        run: cmake --build build-project-sanitize --target aeris_test_project_source_bridge --parallel 2
+
+      - name: Test project bridge contract
+        env:
+          ASAN_OPTIONS: detect_leaks=1
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+        run: ctest --test-dir build-project-sanitize --output-on-failure -R '^project_source_bridge$'

@@ -19,6 +19,15 @@ function(aeris_add_storage_test target_name source_file test_name)
     add_test(NAME ${test_name} COMMAND ${target_name})
 endfunction()
 
+function(aeris_add_project_test target_name source_file test_name)
+    add_executable(${target_name} ${source_file})
+    target_link_libraries(${target_name} PRIVATE AERIS::project)
+    target_compile_features(${target_name} PRIVATE cxx_std_17)
+    set_target_properties(${target_name} PROPERTIES CXX_EXTENSIONS OFF)
+    aeris_enable_warnings(${target_name})
+    add_test(NAME ${test_name} COMMAND ${target_name})
+endfunction()
+
 aeris_add_core_test(aeris_test_authalic test_authalic.cpp authalic_math)
 aeris_add_core_test(aeris_test_rotation test_rotation.cpp spherical_rotation)
 aeris_add_core_test(aeris_test_projection_primitives test_projection_primitives.cpp projection_primitives)
@@ -72,6 +81,14 @@ if(TARGET aeris_storage)
     set_target_properties(aeris_provenance_race PROPERTIES CXX_EXTENSIONS OFF)
     aeris_enable_warnings(aeris_provenance_race)
     add_test(NAME project_storage_provenance_race COMMAND aeris_provenance_race)
+endif()
+
+if(TARGET aeris_project)
+    aeris_add_project_test(
+        aeris_test_project_source_bridge
+        test_project_source_bridge.cpp
+        project_source_bridge
+    )
 endif()
 
 if(TARGET aeris_diagnostic_svg)
