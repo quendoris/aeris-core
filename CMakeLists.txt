@@ -73,6 +73,7 @@ if(AERIS_BUILD_STORAGE)
         src/storage/sqlite_detail.cpp
         src/storage/project.cpp
         src/storage/session.cpp
+        src/storage/provenance.cpp
     )
     add_library(AERIS::storage ALIAS aeris_storage)
     target_include_directories(aeris_storage

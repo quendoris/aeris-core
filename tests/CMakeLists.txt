@@ -44,6 +44,7 @@ aeris_add_core_test(aeris_test_globe_polygon_verified test_globe_polygon_verifie
 
 if(TARGET aeris_storage)
     aeris_add_storage_test(aeris_test_storage test_storage.cpp project_storage)
+    aeris_add_storage_test(aeris_test_provenance test_provenance.cpp project_storage_provenance)
 
     add_executable(aeris_storage_abrupt storage_abrupt.cpp)
     target_link_libraries(aeris_storage_abrupt PRIVATE AERIS::storage)

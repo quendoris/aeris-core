@@ -140,6 +140,32 @@ Status validate_identity(sqlite3* db) {
     return Status::success();
 }
 
+Status validate_schema_surface(sqlite3* db) {
+    for (const char* sql : {
+             "SELECT source_id,adapter_id,capability_bits,temporal_class,provider,dataset,snapshot,dataset_version,source_uri,license_id,content_sha256,retrieved_at_utc,worldview FROM aeris_source LIMIT 0;",
+             "SELECT source_id,logical_name,sha256,size_bytes FROM aeris_source_resource LIMIT 0;"}) {
+        detail::StmtPtr stmt;
+        Status status = detail::prepare(db, sql, stmt);
+        if (!status) return {StorageError::schema_invalid, "required project schema surface is missing: " + status.diagnostic};
+        const int rc = sqlite3_step(stmt.get());
+        if (rc != SQLITE_DONE) {
+            return {StorageError::schema_invalid, "required project schema probe did not terminate cleanly"};
+        }
+    }
+
+    detail::StmtPtr fk;
+    Status status = detail::prepare(db, "PRAGMA foreign_key_check;", fk);
+    if (!status) return status;
+    const int rc = sqlite3_step(fk.get());
+    if (rc == SQLITE_ROW) {
+        return {StorageError::integrity_failed, "project foreign-key integrity check failed"};
+    }
+    if (rc != SQLITE_DONE) {
+        return {StorageError::sqlite_failure, detail::sqlite_message(db, "foreign-key integrity check failed")};
+    }
+    return Status::success();
+}
+
 Status load_metadata(sqlite3* db, ProjectMetadata& metadata) {
     detail::StmtPtr stmt;
     Status status = detail::prepare(
@@ -303,7 +329,7 @@ ProjectStoreResult ProjectStore::create(const std::filesystem::path& path, const
 
     const char* schema =
         "PRAGMA application_id=1095062089;"
-        "PRAGMA user_version=1;"
+        "PRAGMA user_version=2;"
         "CREATE TABLE aeris_meta("
         "id INTEGER PRIMARY KEY CHECK(id=1),"
         "project_uuid TEXT NOT NULL,"
@@ -317,6 +343,28 @@ ProjectStoreResult ProjectStore::create(const std::filesystem::path& path, const
         "projection_id TEXT NOT NULL,"
         "worldview_id TEXT NOT NULL,"
         "frozen INTEGER NOT NULL CHECK(frozen IN (0,1))"
+        ");"
+        "CREATE TABLE aeris_source("
+        "source_id TEXT PRIMARY KEY,"
+        "adapter_id TEXT NOT NULL,"
+        "capability_bits INTEGER NOT NULL CHECK(capability_bits>0 AND capability_bits<=4294967295),"
+        "temporal_class INTEGER NOT NULL CHECK(temporal_class>=0 AND temporal_class<=255),"
+        "provider TEXT NOT NULL,"
+        "dataset TEXT NOT NULL,"
+        "snapshot TEXT NOT NULL,"
+        "dataset_version TEXT NOT NULL,"
+        "source_uri TEXT NOT NULL,"
+        "license_id TEXT NOT NULL,"
+        "content_sha256 TEXT NOT NULL,"
+        "retrieved_at_utc TEXT NOT NULL,"
+        "worldview TEXT NOT NULL"
+        ");"
+        "CREATE TABLE aeris_source_resource("
+        "source_id TEXT NOT NULL REFERENCES aeris_source(source_id) ON DELETE CASCADE,"
+        "logical_name TEXT NOT NULL,"
+        "sha256 TEXT NOT NULL,"
+        "size_bytes INTEGER CHECK(size_bytes IS NULL OR size_bytes>=0),"
+        "PRIMARY KEY(source_id,logical_name)"
         ");";
     status = detail::exec(staged_db.get(), schema);
     if (!status) {
@@ -352,6 +400,11 @@ ProjectStoreResult ProjectStore::create(const std::filesystem::path& path, const
     }
     status = detail::verify_quick_check(staged_db.get());
     if (!status) {
+        staged_db.reset();
+        remove_staging_directory(staging);
+        return {std::move(status), nullptr};
+    }
+    if (!(status = validate_schema_surface(staged_db.get()))) {
         staged_db.reset();
         remove_staging_directory(staging);
         return {std::move(status), nullptr};
@@ -401,11 +454,10 @@ ProjectStoreResult ProjectStore::open(const std::filesystem::path& path) {
     Status status = detail::open_database(path, SQLITE_OPEN_READWRITE, impl->db);
     if (!status) return {std::move(status), nullptr};
 
-    // Validate hostile/external SQLite input before any journal-mode or durability
-    // PRAGMA is allowed to mutate connection-visible database state.
     if (!(status = detail::verify_quick_check(impl->db.get()))) return {std::move(status), nullptr};
     if (!(status = validate_identity(impl->db.get()))) return {std::move(status), nullptr};
     if (!(status = load_metadata(impl->db.get(), impl->metadata))) return {std::move(status), nullptr};
+    if (!(status = validate_schema_surface(impl->db.get()))) return {std::move(status), nullptr};
     if (!(status = detail::configure_durable(impl->db.get()))) return {std::move(status), nullptr};
 
     return {Status::success(), std::unique_ptr<ProjectStore>(new ProjectStore(std::move(impl)))};
@@ -414,29 +466,50 @@ ProjectStoreResult ProjectStore::open(const std::filesystem::path& path) {
 const ProjectMetadata& ProjectStore::metadata() const noexcept { return impl_->metadata; }
 const std::filesystem::path& ProjectStore::path() const noexcept { return impl_->path; }
 
+Status ProjectStore::refresh_metadata() {
+    ProjectMetadata current;
+    Status status = load_metadata(impl_->db.get(), current);
+    if (!status) return status;
+    if (!impl_->metadata.project_uuid.empty() && current.project_uuid != impl_->metadata.project_uuid) {
+        return {StorageError::schema_invalid, "project UUID changed while the project handle was open"};
+    }
+    impl_->metadata = std::move(current);
+    return Status::success();
+}
+
 Status ProjectStore::update_metadata(const ProjectMetadataUpdate& update) {
     Status status = validate_metadata_update(update);
     if (!status) return status;
-    if (impl_->metadata.revision >= static_cast<std::uint64_t>(std::numeric_limits<sqlite3_int64>::max())) {
+    if (!(status = detail::begin_immediate(impl_->db.get()))) return status;
+
+    ProjectMetadata current;
+    status = load_metadata(impl_->db.get(), current);
+    if (!status || current.project_uuid != impl_->metadata.project_uuid) {
+        detail::rollback(impl_->db.get());
+        if (!status) return status;
+        return {StorageError::schema_invalid, "project UUID changed while applying a mutation"};
+    }
+    if (current.revision >= static_cast<std::uint64_t>(std::numeric_limits<sqlite3_int64>::max())) {
+        detail::rollback(impl_->db.get());
         return {StorageError::schema_invalid, "project revision exhausted signed SQLite integer range"};
     }
 
-    const std::string projection = update.projection_id.value_or(impl_->metadata.projection_id);
-    const std::string worldview = update.worldview_id.value_or(impl_->metadata.worldview_id);
-    const bool frozen = update.frozen.value_or(impl_->metadata.frozen);
-    const std::uint64_t next_revision = impl_->metadata.revision + 1U;
+    const std::string projection = update.projection_id.value_or(current.projection_id);
+    const std::string worldview = update.worldview_id.value_or(current.worldview_id);
+    const bool frozen = update.frozen.value_or(current.frozen);
+    const std::uint64_t next_revision = current.revision + 1U;
 
-    if (!(status = detail::begin_immediate(impl_->db.get()))) return status;
     detail::StmtPtr stmt;
     status = detail::prepare(
         impl_->db.get(),
-        "UPDATE aeris_meta SET revision=?,modified_utc=?,projection_id=?,worldview_id=?,frozen=? WHERE id=1;",
+        "UPDATE aeris_meta SET revision=?,modified_utc=?,projection_id=?,worldview_id=?,frozen=? WHERE id=1 AND project_uuid=?;",
         stmt);
     if (status) status = detail::bind_int64(impl_->db.get(), stmt.get(), 1, static_cast<sqlite3_int64>(next_revision));
     if (status) status = detail::bind_text(impl_->db.get(), stmt.get(), 2, update.modified_utc);
     if (status) status = detail::bind_text(impl_->db.get(), stmt.get(), 3, projection);
     if (status) status = detail::bind_text(impl_->db.get(), stmt.get(), 4, worldview);
     if (status) status = detail::bind_int64(impl_->db.get(), stmt.get(), 5, frozen ? 1 : 0);
+    if (status) status = detail::bind_text(impl_->db.get(), stmt.get(), 6, current.project_uuid);
     if (status) status = detail::step_done(impl_->db.get(), stmt.get());
     if (status && sqlite3_changes(impl_->db.get()) != 1) {
         status = {StorageError::schema_invalid, "aeris_meta singleton update did not affect exactly one row"};
@@ -451,11 +524,12 @@ Status ProjectStore::update_metadata(const ProjectMetadataUpdate& update) {
         return status;
     }
 
-    impl_->metadata.revision = next_revision;
-    impl_->metadata.modified_utc = update.modified_utc;
-    impl_->metadata.projection_id = projection;
-    impl_->metadata.worldview_id = worldview;
-    impl_->metadata.frozen = frozen;
+    current.revision = next_revision;
+    current.modified_utc = update.modified_utc;
+    current.projection_id = projection;
+    current.worldview_id = worldview;
+    current.frozen = frozen;
+    impl_->metadata = std::move(current);
     return Status::success();
 }
 
@@ -464,7 +538,8 @@ Status ProjectStore::verify_integrity() const {
     if (!status) return status;
     if (!(status = validate_identity(impl_->db.get()))) return status;
     ProjectMetadata metadata;
-    return load_metadata(impl_->db.get(), metadata);
+    if (!(status = load_metadata(impl_->db.get(), metadata))) return status;
+    return validate_schema_surface(impl_->db.get());
 }
 
 }  // namespace aeris::storage
