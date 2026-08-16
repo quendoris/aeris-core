@@ -30,7 +30,7 @@ int write_then_abort(const std::filesystem::path& path) {
     mutation.projection_id = "aeris.projection.sinusoidal.v1";
     if (!project.store->update_metadata(mutation).ok()) return 12;
 
-    auto session = aeris::storage::SessionStore::open_or_create(path, kUuid, "2026-08-16T18:20:02Z");
+    auto session = aeris::storage::SessionStore::open_or_create(*project.store, "2026-08-16T18:20:02Z");
     if (!session.ok()) return 13;
     aeris::storage::SessionViewState view;
     view.mode = aeris::storage::SessionViewState::Mode::mollweide;
@@ -55,7 +55,7 @@ int verify_after_abort(const std::filesystem::path& path) {
         return 21;
     }
 
-    auto session = aeris::storage::SessionStore::open_or_create(path, kUuid, "2026-08-16T18:20:04Z");
+    auto session = aeris::storage::SessionStore::open_or_create(*project.store, "2026-08-16T18:20:04Z");
     if (!session.ok()) {
         std::cerr << "session reopen failed: " << session.status.diagnostic << '\n';
         return 22;

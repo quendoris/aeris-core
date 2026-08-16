@@ -361,8 +361,10 @@ ProjectStoreResult ProjectStore::create(const std::filesystem::path& path, const
     std::error_code publish_error;
     std::filesystem::create_hard_link(staged_path, path, publish_error);
     if (publish_error) {
+        std::error_code inspect_error;
+        const bool destination_exists = std::filesystem::exists(path, inspect_error);
         remove_staging_directory(staging);
-        if (publish_error == std::make_error_code(std::errc::file_exists)) {
+        if (!inspect_error && destination_exists) {
             return {{StorageError::path_exists, "refusing to overwrite an existing project path"}, nullptr};
         }
         return {{StorageError::filesystem_failure,
@@ -398,10 +400,14 @@ ProjectStoreResult ProjectStore::open(const std::filesystem::path& path) {
     impl->path = path;
     Status status = detail::open_database(path, SQLITE_OPEN_READWRITE, impl->db);
     if (!status) return {std::move(status), nullptr};
-    if (!(status = detail::configure_durable(impl->db.get()))) return {std::move(status), nullptr};
+
+    // Validate hostile/external SQLite input before any journal-mode or durability
+    // PRAGMA is allowed to mutate connection-visible database state.
     if (!(status = detail::verify_quick_check(impl->db.get()))) return {std::move(status), nullptr};
     if (!(status = validate_identity(impl->db.get()))) return {std::move(status), nullptr};
     if (!(status = load_metadata(impl->db.get(), impl->metadata))) return {std::move(status), nullptr};
+    if (!(status = detail::configure_durable(impl->db.get()))) return {std::move(status), nullptr};
+
     return {Status::success(), std::unique_ptr<ProjectStore>(new ProjectStore(std::move(impl)))};
 }
 

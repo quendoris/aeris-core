@@ -5,8 +5,10 @@
 #include "aeris/storage/project.hpp"
 #include "sqlite_detail.hpp"
 
+#include <array>
 #include <cmath>
 #include <limits>
+#include <system_error>
 #include <utility>
 
 #include <sqlite3.h>
@@ -15,6 +17,42 @@ namespace aeris::storage {
 namespace {
 
 constexpr double kHalfPi = 1.57079632679489661923132169163975144;
+constexpr int kStagingDirectoryAttempts = 8;
+
+std::string random_hex_token() {
+    std::array<unsigned char, 16> bytes{};
+    sqlite3_randomness(static_cast<int>(bytes.size()), bytes.data());
+    constexpr char digits[] = "0123456789abcdef";
+    std::string value;
+    value.reserve(bytes.size() * 2U);
+    for (const unsigned char byte : bytes) {
+        value.push_back(digits[(byte >> 4U) & 0x0FU]);
+        value.push_back(digits[byte & 0x0FU]);
+    }
+    return value;
+}
+
+Status make_session_staging_directory(const std::filesystem::path& destination, std::filesystem::path& staging) {
+    std::filesystem::path parent = destination.parent_path();
+    if (parent.empty()) parent = ".";
+    for (int attempt = 0; attempt < kStagingDirectoryAttempts; ++attempt) {
+        const std::filesystem::path candidate = parent / (".aeris-session-create-" + random_hex_token());
+        std::error_code ec;
+        if (std::filesystem::create_directory(candidate, ec)) {
+            staging = candidate;
+            return Status::success();
+        }
+        if (ec && ec != std::make_error_code(std::errc::file_exists)) {
+            return {StorageError::filesystem_failure, "could not create sibling session staging directory: " + ec.message()};
+        }
+    }
+    return {StorageError::filesystem_failure, "could not allocate a unique sibling session staging directory"};
+}
+
+void remove_staging_directory(const std::filesystem::path& staging) noexcept {
+    std::error_code ignored;
+    (void)std::filesystem::remove_all(staging, ignored);
+}
 
 const char* mode_text(const SessionViewState::Mode mode) noexcept {
     switch (mode) {
@@ -151,44 +189,91 @@ SessionStore::~SessionStore() = default;
 SessionStore::SessionStore(SessionStore&&) noexcept = default;
 SessionStore& SessionStore::operator=(SessionStore&&) noexcept = default;
 
-SessionStoreResult SessionStore::open_or_create(
-    const std::filesystem::path& project_path,
-    const std::string_view project_uuid,
-    const std::string_view timestamp_utc) {
-    if (project_path.empty() || !is_canonical_uuid(project_uuid) || !is_canonical_utc_timestamp(timestamp_utc)) {
-        return {{StorageError::invalid_argument, "session requires a project path, canonical project UUID, and canonical UTC timestamp"}, nullptr};
+SessionStoreResult SessionStore::open_or_create(const ProjectStore& project, const std::string_view timestamp_utc) {
+    if (!is_canonical_utc_timestamp(timestamp_utc)) {
+        return {{StorageError::invalid_argument, "session requires a canonical UTC timestamp"}, nullptr};
     }
 
-    auto impl = std::make_unique<Impl>();
-    impl->path = adjacent_session_path(project_path);
-    std::error_code ec;
-    const bool existed = std::filesystem::exists(impl->path, ec);
-    if (ec) return {{StorageError::invalid_argument, "could not inspect session path: " + ec.message()}, nullptr};
+    const std::filesystem::path final_path = adjacent_session_path(project.path());
+    const std::string project_uuid = project.metadata().project_uuid;
 
-    Status status = detail::open_database(
-        impl->path,
-        SQLITE_OPEN_READWRITE | (existed ? 0 : SQLITE_OPEN_CREATE),
-        impl->db);
-    if (!status) return {std::move(status), nullptr};
-    if (!(status = detail::configure_durable(impl->db.get()))) return {std::move(status), nullptr};
+    const auto open_existing = [&]() -> SessionStoreResult {
+        auto impl = std::make_unique<Impl>();
+        impl->path = final_path;
+        Status status = detail::open_database(final_path, SQLITE_OPEN_READWRITE, impl->db);
+        if (!status) return {std::move(status), nullptr};
 
-    if (!existed) {
-        status = initialize_session(impl->db.get(), std::string(project_uuid), std::string(timestamp_utc));
-        if (!status) {
-            impl->db.reset();
-            std::error_code ignored;
-            (void)std::filesystem::remove(impl->path, ignored);
-            return {std::move(status), nullptr};
+        // Reject unrelated or stale SQLite files before any durability PRAGMA may
+        // change their journal configuration.
+        if (!(status = detail::verify_quick_check(impl->db.get()))) return {std::move(status), nullptr};
+        if (!(status = validate_identity(impl->db.get()))) return {std::move(status), nullptr};
+        if (!(status = load_metadata(impl->db.get(), impl->metadata))) return {std::move(status), nullptr};
+        if (impl->metadata.project_uuid != project_uuid) {
+            return {{StorageError::session_project_mismatch,
+                     "session sidecar belongs to a different project UUID and was not applied"},
+                    nullptr};
         }
+        if (!(status = detail::configure_durable(impl->db.get()))) return {std::move(status), nullptr};
+        return {Status::success(), std::unique_ptr<SessionStore>(new SessionStore(std::move(impl)))};
+    };
+
+    std::error_code exists_error;
+    const bool existed = std::filesystem::exists(final_path, exists_error);
+    if (exists_error) {
+        return {{StorageError::filesystem_failure, "could not inspect session path: " + exists_error.message()}, nullptr};
+    }
+    if (existed) return open_existing();
+
+    std::filesystem::path staging;
+    Status status = make_session_staging_directory(final_path, staging);
+    if (!status) return {std::move(status), nullptr};
+    const std::filesystem::path staged_path = staging / "session.sqlite";
+
+    detail::DbPtr staged_db;
+    status = detail::open_database(staged_path, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, staged_db);
+    if (!status) {
+        remove_staging_directory(staging);
+        return {std::move(status), nullptr};
+    }
+    if (!(status = detail::configure_durable(staged_db.get())) ||
+        !(status = initialize_session(staged_db.get(), project_uuid, std::string(timestamp_utc))) ||
+        !(status = detail::verify_quick_check(staged_db.get()))) {
+        staged_db.reset();
+        remove_staging_directory(staging);
+        return {std::move(status), nullptr};
+    }
+    staged_db.reset();
+
+    std::error_code publish_error;
+    std::filesystem::create_hard_link(staged_path, final_path, publish_error);
+    if (publish_error) {
+        std::error_code inspect_error;
+        const bool winner_exists = std::filesystem::exists(final_path, inspect_error);
+        remove_staging_directory(staging);
+        if (!inspect_error && winner_exists) {
+            // A concurrent creator may have published first. Accept only after
+            // validating that winner through the ordinary UUID-bound path.
+            return open_existing();
+        }
+        return {{StorageError::filesystem_failure,
+                 "could not atomically publish the staged session sidecar: " + publish_error.message()},
+                nullptr};
     }
 
-    if (!(status = detail::verify_quick_check(impl->db.get()))) return {std::move(status), nullptr};
-    if (!(status = validate_identity(impl->db.get()))) return {std::move(status), nullptr};
-    if (!(status = load_metadata(impl->db.get(), impl->metadata))) return {std::move(status), nullptr};
-    if (impl->metadata.project_uuid != project_uuid) {
-        return {{StorageError::session_project_mismatch, "session sidecar belongs to a different project UUID and was not applied"}, nullptr};
+    auto published = open_existing();
+    if (!published.ok()) {
+        std::error_code equivalent_error;
+        const bool same_file = std::filesystem::equivalent(staged_path, final_path, equivalent_error);
+        if (!equivalent_error && same_file) {
+            std::error_code ignored;
+            (void)std::filesystem::remove(final_path, ignored);
+        }
+        remove_staging_directory(staging);
+        return published;
     }
-    return {Status::success(), std::unique_ptr<SessionStore>(new SessionStore(std::move(impl)))};
+
+    remove_staging_directory(staging);
+    return published;
 }
 
 const SessionMetadata& SessionStore::metadata() const noexcept { return impl_->metadata; }

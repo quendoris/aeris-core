@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <iterator>
 #include <string>
 
 namespace {
@@ -29,12 +30,17 @@ void expect_error(const aeris::storage::Status& status, const aeris::storage::St
     }
 }
 
-bool has_staging_directory(const std::filesystem::path& root) {
+bool has_staging_directory(const std::filesystem::path& root, const std::string& prefix) {
     std::error_code ec;
     for (std::filesystem::directory_iterator it(root, ec), end; !ec && it != end; it.increment(ec)) {
-        if (it->path().filename().string().rfind(".aeris-create-", 0U) == 0U) return true;
+        if (it->path().filename().string().rfind(prefix, 0U) == 0U) return true;
     }
     return false;
+}
+
+std::string read_binary(const std::filesystem::path& path) {
+    std::ifstream stream(path, std::ios::binary);
+    return {std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>()};
 }
 
 }  // namespace
@@ -70,7 +76,7 @@ int main() {
         return 1;
     }
     expect(std::filesystem::exists(project_path), "project file should exist immediately after acknowledged creation");
-    expect(!has_staging_directory(root), "successful project create must remove sibling staging state");
+    expect(!has_staging_directory(root, ".aeris-create-"), "successful project create must remove sibling staging state");
     expect(created.store->metadata().project_uuid == uuid, "project UUID should match explicit create identity");
     expect(created.store->metadata().revision == 0U, "new project revision should be zero");
     expect(created.store->metadata().projection_id == "aeris.projection.unspecified", "new project projection should be explicit unspecified value");
@@ -78,7 +84,7 @@ int main() {
 
     auto duplicate = ProjectStore::create(project_path, create_options);
     expect_error(duplicate.status, StorageError::path_exists, "project create must refuse overwrite at atomic publish step");
-    expect(!has_staging_directory(root), "failed no-overwrite publication must clean sibling staging state");
+    expect(!has_staging_directory(root, ".aeris-create-"), "failed no-overwrite publication must clean sibling staging state");
     expect(created.store->metadata().revision == 0U, "failed duplicate create must not mutate the already-open project");
 
     ProjectMetadataUpdate update;
@@ -103,14 +109,15 @@ int main() {
     expect(reopened.store->metadata().worldview_id == "neutral-disputed", "committed worldview should survive reopen");
     expect(reopened.store->metadata().frozen, "committed frozen flag should survive reopen");
 
-    auto session = SessionStore::open_or_create(project_path, uuid, "2026-08-16T18:10:02Z");
-    expect(session.ok(), "adjacent session should create for matching project UUID");
+    auto session = SessionStore::open_or_create(*reopened.store, "2026-08-16T18:10:02Z");
+    expect(session.ok(), "adjacent session should create from the validated project identity");
     if (!session.ok()) {
         std::cerr << session.status.diagnostic << '\n';
         return 1;
     }
     expect(session.store->path() == adjacent_session_path(project_path), "session path must be directly adjacent as .aeris.session");
     expect(std::filesystem::exists(session.store->path()), "session sidecar should be durably visible after creation");
+    expect(!has_staging_directory(root, ".aeris-session-create-"), "successful session create must remove sibling staging state");
     auto empty_view = session.store->read_view_state();
     expect(empty_view.ok() && !empty_view.value.has_value(), "new session should not invent a view state");
 
@@ -124,7 +131,13 @@ int main() {
     expect(session.store->metadata().revision == 1U, "session mutation should increment sidecar revision");
     session.store.reset();
 
-    auto session_reopen = SessionStore::open_or_create(project_path, uuid, "2026-08-16T18:10:04Z");
+    const std::filesystem::path session_path = adjacent_session_path(project_path);
+    const std::string session_bytes_before_wrong_reader = read_binary(session_path);
+    auto session_as_project = ProjectStore::open(session_path);
+    expect_error(session_as_project.status, StorageError::invalid_application_id, "project reader must reject a session database before configuring it");
+    expect(read_binary(session_path) == session_bytes_before_wrong_reader, "rejected project open must not mutate session bytes");
+
+    auto session_reopen = SessionStore::open_or_create(*reopened.store, "2026-08-16T18:10:04Z");
     expect(session_reopen.ok(), "matching session should reopen");
     if (!session_reopen.ok()) {
         std::cerr << session_reopen.status.diagnostic << '\n';
@@ -140,18 +153,29 @@ int main() {
     }
     session_reopen.store.reset();
 
-    const std::string other_uuid = "fedcba98-7654-4321-8abc-def012345678";
-    auto mismatch = SessionStore::open_or_create(project_path, other_uuid, "2026-08-16T18:10:05Z");
-    expect_error(mismatch.status, StorageError::session_project_mismatch, "session sidecar must fail closed on project UUID mismatch");
+    ProjectCreateOptions other_options = create_options;
+    other_options.timestamp_utc = "2026-08-16T18:10:05Z";
+    other_options.project_uuid = "fedcba98-7654-4321-8abc-def012345678";
+    const std::filesystem::path other_project_path = root / "other.aeris";
+    auto other_project = ProjectStore::create(other_project_path, other_options);
+    expect(other_project.ok(), "second project should create for stale-sidecar mismatch test");
+    if (!other_project.ok()) return 1;
 
-    auto session_after_mismatch = SessionStore::open_or_create(project_path, uuid, "2026-08-16T18:10:06Z");
-    expect(session_after_mismatch.ok(), "UUID mismatch attempt must not rewrite the existing sidecar");
+    const std::filesystem::path stale_session_path = adjacent_session_path(other_project_path);
+    std::filesystem::copy_file(session_path, stale_session_path, std::filesystem::copy_options::overwrite_existing, ec);
+    expect(!ec, "valid sidecar should copy beside a different project for UUID mismatch test");
+    const std::string stale_bytes_before = read_binary(stale_session_path);
+    auto mismatch = SessionStore::open_or_create(*other_project.store, "2026-08-16T18:10:06Z");
+    expect_error(mismatch.status, StorageError::session_project_mismatch, "stale sidecar must fail closed on project UUID mismatch");
+    expect(read_binary(stale_session_path) == stale_bytes_before, "UUID-mismatched sidecar must not be mutated before rejection");
+
+    auto session_after_mismatch = SessionStore::open_or_create(*reopened.store, "2026-08-16T18:10:07Z");
+    expect(session_after_mismatch.ok(), "mismatch beside another project must not affect the original matching sidecar");
     if (session_after_mismatch.ok()) {
-        expect(session_after_mismatch.store->metadata().revision == 1U, "mismatch attempt must not mutate session revision");
+        expect(session_after_mismatch.store->metadata().revision == 1U, "mismatch attempt must not mutate original session revision");
     }
     session_after_mismatch.store.reset();
 
-    const std::filesystem::path session_path = adjacent_session_path(project_path);
     std::filesystem::remove(session_path, ec);
     expect(!ec, "session sidecar should be independently deletable");
     auto project_without_session = ProjectStore::open(project_path);

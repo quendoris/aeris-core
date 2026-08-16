@@ -13,6 +13,8 @@
 
 namespace aeris::storage {
 
+class ProjectStore;
+
 inline constexpr std::uint32_t kSessionApplicationId = 0x41455353U;  // "AESS"
 inline constexpr int kSessionSchemaGeneration = 1;
 
@@ -54,10 +56,7 @@ public:
     SessionStore(const SessionStore&) = delete;
     SessionStore& operator=(const SessionStore&) = delete;
 
-    static SessionStoreResult open_or_create(
-        const std::filesystem::path& project_path,
-        std::string_view project_uuid,
-        std::string_view timestamp_utc);
+    static SessionStoreResult open_or_create(const ProjectStore& project, std::string_view timestamp_utc);
 
     [[nodiscard]] const SessionMetadata& metadata() const noexcept;
     [[nodiscard]] const std::filesystem::path& path() const noexcept;
