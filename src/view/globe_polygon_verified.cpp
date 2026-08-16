@@ -16,9 +16,8 @@ struct ComponentAssessment final {
     double resolution_floor_m2 = 0.0;
     std::size_t significant_count = 0U;
     std::size_t negligible_count = 0U;
-    // 1 = significant component with the required orientation.
-    // 0 = component whose signed area is unresolved below the binary64 floor.
     std::vector<unsigned char> significance;
+    std::vector<double> signed_areas_m2;
 };
 
 [[nodiscard]] bool valid_verification_options(
@@ -51,25 +50,21 @@ struct ComponentAssessment final {
 ) {
     ComponentAssessment assessment{};
     assessment.resolution_floor_m2 = signed_area_roundoff_floor(polygon);
+    assessment.significance.reserve(polygon.rings.size());
+    assessment.signed_areas_m2.reserve(polygon.rings.size());
 
-    // Zero-crossing major/complement representations intentionally contain a
-    // full-limb outer ring plus a source-boundary hole. Those structural rings
-    // may have opposite signs and are verified by aggregate orientation.
-    if (polygon.horizon_crossings == 0U) {
-        assessment.acceptable = true;
-        assessment.significant_count = polygon.rings.size();
-        assessment.significance.assign(polygon.rings.size(), 1U);
-        return assessment;
-    }
-
-    if (polygon.rings.empty() ||
-        interior_side == geometry::RingInteriorSide::unspecified ||
-        !std::isfinite(assessment.resolution_floor_m2) ||
+    if (!std::isfinite(assessment.resolution_floor_m2) ||
         assessment.resolution_floor_m2 < 0.0) {
         return assessment;
     }
 
-    assessment.significance.reserve(polygon.rings.size());
+    const bool structural_zero_crossing = polygon.horizon_crossings == 0U;
+    if (!structural_zero_crossing &&
+        (polygon.rings.empty() ||
+         interior_side == geometry::RingInteriorSide::unspecified)) {
+        return assessment;
+    }
+
     const bool expected_positive =
         interior_side == geometry::RingInteriorSide::left;
 
@@ -77,6 +72,17 @@ struct ComponentAssessment final {
         const double area = geometry::signed_planar_area(ring);
         if (!std::isfinite(area)) {
             return assessment;
+        }
+        assessment.signed_areas_m2.push_back(area);
+
+        // Zero-crossing major/complement representations intentionally contain
+        // structural outer/hole rings of opposite signs. Their aggregate sign
+        // is validated by the low-level projector, so they remain significant
+        // without a per-ring orientation requirement.
+        if (structural_zero_crossing) {
+            ++assessment.significant_count;
+            assessment.significance.push_back(1U);
+            continue;
         }
 
         if (std::abs(area) <= assessment.resolution_floor_m2) {
@@ -99,22 +105,51 @@ struct ComponentAssessment final {
 
 [[nodiscard]] double allowed_area_delta(
     const double previous_area,
-    const GlobePolygonResult& current,
+    const double current_area,
+    const double numerical_floor,
     const VerifiedGlobePolygonOptions& options
 ) noexcept {
     const double scale = std::max({
         1.0,
         std::abs(previous_area),
-        std::abs(current.planar_signed_area_m2),
+        std::abs(current_area),
     });
     const double requested = std::max(
         options.absolute_area_stability_tolerance_m2,
         options.relative_area_stability_tolerance * scale
     );
-    const double floating_floor =
-        2048.0 * std::numeric_limits<double>::epsilon() *
-        std::max(scale, std::abs(current.visible_disk_area_m2));
-    return std::max(requested, floating_floor);
+    return std::max(requested, numerical_floor);
+}
+
+[[nodiscard]] bool component_areas_converged(
+    const std::vector<double>& previous,
+    const std::vector<double>& current,
+    const double previous_floor,
+    const double current_floor,
+    const VerifiedGlobePolygonOptions& options,
+    double& max_error_m2
+) noexcept {
+    max_error_m2 = 0.0;
+    if (previous.size() != current.size()) {
+        return false;
+    }
+
+    const double numerical_floor = std::max(previous_floor, current_floor);
+    for (std::size_t index = 0U; index < current.size(); ++index) {
+        if (!std::isfinite(previous[index]) || !std::isfinite(current[index])) {
+            return false;
+        }
+        const double delta = std::abs(current[index] - previous[index]);
+        max_error_m2 = std::max(max_error_m2, delta);
+        if (delta > allowed_area_delta(
+                        previous[index],
+                        current[index],
+                        numerical_floor,
+                        options)) {
+            return false;
+        }
+    }
+    return true;
 }
 
 }  // namespace
@@ -138,9 +173,11 @@ VerifiedGlobePolygonResult project_visible_wgs84_linear_polygon_ring_verified(
 
     bool have_previous_candidate = false;
     double previous_area = 0.0;
+    double previous_component_floor = 0.0;
     std::size_t previous_crossings = 0U;
     std::size_t previous_ring_count = 0U;
     std::vector<unsigned char> previous_significance;
+    std::vector<double> previous_component_areas;
 
     VerifiedGlobePolygonError unresolved =
         VerifiedGlobePolygonError::area_convergence_unmet;
@@ -171,8 +208,10 @@ VerifiedGlobePolygonResult project_visible_wgs84_linear_polygon_ring_verified(
         verified.final_horizon_arc_tolerance_m = arc_tolerance;
         verified.topology_stable = false;
         verified.component_orientation_stable = false;
+        verified.component_area_stable = false;
         verified.estimated_planar_area_error_m2 = 0.0;
         verified.allowed_planar_area_delta_m2 = 0.0;
+        verified.estimated_max_component_area_error_m2 = 0.0;
         verified.component_area_resolution_floor_m2 = 0.0;
         verified.significant_component_count = 0U;
         verified.negligible_component_count = 0U;
@@ -183,10 +222,6 @@ VerifiedGlobePolygonResult project_visible_wgs84_linear_polygon_ring_verified(
                 return verified;
             }
 
-            // A finite approximation can invert a very thin visible sliver at
-            // the horizon even when all sampled points and roots are valid.
-            // Aggregate orientation mismatch is therefore refineable; every
-            // other low-level error remains fail-closed.
             if (current.error != GlobePolygonError::orientation_mismatch) {
                 verified.error =
                     VerifiedGlobePolygonError::finite_projection_failed;
@@ -197,6 +232,7 @@ VerifiedGlobePolygonResult project_visible_wgs84_linear_polygon_ring_verified(
                 VerifiedGlobePolygonError::component_orientation_unstable;
             have_previous_candidate = false;
             previous_significance.clear();
+            previous_component_areas.clear();
         } else {
             const ComponentAssessment assessment =
                 assess_components(current, ring.interior_side);
@@ -210,14 +246,17 @@ VerifiedGlobePolygonResult project_visible_wgs84_linear_polygon_ring_verified(
                     VerifiedGlobePolygonError::component_orientation_unstable;
                 have_previous_candidate = false;
                 previous_significance.clear();
+                previous_component_areas.clear();
             } else {
                 verified.component_orientation_stable = true;
 
                 if (!have_previous_candidate) {
                     previous_area = current.planar_signed_area_m2;
+                    previous_component_floor = assessment.resolution_floor_m2;
                     previous_crossings = current.horizon_crossings;
                     previous_ring_count = current.rings.size();
                     previous_significance = assessment.significance;
+                    previous_component_areas = assessment.signed_areas_m2;
                     have_previous_candidate = true;
                     unresolved =
                         VerifiedGlobePolygonError::area_convergence_unmet;
@@ -229,40 +268,63 @@ VerifiedGlobePolygonResult project_visible_wgs84_linear_polygon_ring_verified(
 
                     if (!topology_stable) {
                         previous_area = current.planar_signed_area_m2;
+                        previous_component_floor = assessment.resolution_floor_m2;
                         previous_crossings = current.horizon_crossings;
                         previous_ring_count = current.rings.size();
                         previous_significance = assessment.significance;
+                        previous_component_areas = assessment.signed_areas_m2;
                         unresolved =
                             VerifiedGlobePolygonError::topology_unstable;
                     } else {
                         verified.topology_stable = true;
+
+                        const bool components_stable = component_areas_converged(
+                            previous_component_areas,
+                            assessment.signed_areas_m2,
+                            previous_component_floor,
+                            assessment.resolution_floor_m2,
+                            options,
+                            verified.estimated_max_component_area_error_m2
+                        );
+                        verified.component_area_stable = components_stable;
+
                         verified.estimated_planar_area_error_m2 =
                             std::abs(
                                 current.planar_signed_area_m2 - previous_area
                             );
+                        const double aggregate_floor = std::max(
+                            previous_component_floor,
+                            assessment.resolution_floor_m2
+                        );
                         verified.allowed_planar_area_delta_m2 =
                             allowed_area_delta(
                                 previous_area,
-                                current,
+                                current.planar_signed_area_m2,
+                                aggregate_floor,
                                 options
                             );
 
-                        if (std::isfinite(
+                        const bool aggregate_stable =
+                            std::isfinite(
                                 verified.estimated_planar_area_error_m2
                             ) &&
                             std::isfinite(
                                 verified.allowed_planar_area_delta_m2
                             ) &&
                             verified.estimated_planar_area_error_m2 <=
-                                verified.allowed_planar_area_delta_m2) {
+                                verified.allowed_planar_area_delta_m2;
+
+                        if (components_stable && aggregate_stable) {
                             verified.error = VerifiedGlobePolygonError::none;
                             return verified;
                         }
 
                         previous_area = current.planar_signed_area_m2;
+                        previous_component_floor = assessment.resolution_floor_m2;
                         previous_crossings = current.horizon_crossings;
                         previous_ring_count = current.rings.size();
                         previous_significance = assessment.significance;
+                        previous_component_areas = assessment.signed_areas_m2;
                         unresolved =
                             VerifiedGlobePolygonError::area_convergence_unmet;
                     }

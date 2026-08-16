@@ -74,6 +74,7 @@ bool test_thin_horizon_sliver_refines() {
             << " finite_error=" << static_cast<int>(result.polygon.error)
             << " rounds=" << result.refinement_rounds
             << " area=" << result.polygon.planar_signed_area_m2
+            << " component_delta=" << result.estimated_max_component_area_error_m2
             << " estimated_delta=" << result.estimated_planar_area_error_m2
             << " allowed_delta=" << result.allowed_planar_area_delta_m2
             << '\n';
@@ -90,15 +91,16 @@ bool test_thin_horizon_sliver_refines() {
     }
     if (!result.topology_stable ||
         !result.component_orientation_stable ||
+        !result.component_area_stable ||
         result.polygon.horizon_crossings != 2U ||
         result.polygon.rings.size() != 1U ||
         !(result.polygon.planar_signed_area_m2 > 0.0)) {
-        std::cerr << "thin sliver did not preserve verified topology/orientation\n";
+        std::cerr << "thin sliver did not preserve verified topology/orientation/component convergence\n";
         return false;
     }
     if (!(result.estimated_planar_area_error_m2 <=
           result.allowed_planar_area_delta_m2)) {
-        std::cerr << "thin sliver accepted without area convergence\n";
+        std::cerr << "thin sliver accepted without aggregate area convergence\n";
         return false;
     }
 
@@ -106,11 +108,6 @@ bool test_thin_horizon_sliver_refines() {
 }
 
 bool test_numerically_zero_component_does_not_invent_orientation() {
-    // Identity-camera horizon is longitude +/-90 deg. This entire visible
-    // region enters the front hemisphere by only 1e-7 rad. With a sufficiently
-    // fine finite approximation its screen area is below the binary64
-    // orientation floor. The verifier must classify that fact explicitly
-    // instead of inventing a positive or negative orientation.
     const double just_inside_horizon = aeris::geo::kHalfPi - 1e-7;
     const auto ring = make_ring(
         {
@@ -150,6 +147,7 @@ bool test_numerically_zero_component_does_not_invent_orientation() {
             << " significant=" << result.significant_component_count
             << " negligible=" << result.negligible_component_count
             << " floor=" << result.component_area_resolution_floor_m2
+            << " component_delta=" << result.estimated_max_component_area_error_m2
             << " area=" << result.polygon.planar_signed_area_m2
             << '\n';
         return false;
@@ -157,18 +155,22 @@ bool test_numerically_zero_component_does_not_invent_orientation() {
 
     if (!result.topology_stable ||
         !result.component_orientation_stable ||
+        !result.component_area_stable ||
         result.polygon.horizon_crossings != 2U ||
         result.polygon.rings.size() != 1U ||
         result.significant_component_count != 0U ||
         result.negligible_component_count != 1U ||
-        !(result.component_area_resolution_floor_m2 > 0.0)) {
+        !(result.component_area_resolution_floor_m2 > 0.0) ||
+        result.estimated_max_component_area_error_m2 >
+            result.component_area_resolution_floor_m2) {
         std::cerr
-            << "numerically zero component was not explicitly classified:"
+            << "numerically zero component was not explicitly/stably classified:"
             << " crossings=" << result.polygon.horizon_crossings
             << " rings=" << result.polygon.rings.size()
             << " significant=" << result.significant_component_count
             << " negligible=" << result.negligible_component_count
             << " floor=" << result.component_area_resolution_floor_m2
+            << " component_delta=" << result.estimated_max_component_area_error_m2
             << " area=" << result.polygon.planar_signed_area_m2
             << '\n';
         return false;
