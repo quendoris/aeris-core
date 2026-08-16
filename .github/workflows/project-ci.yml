@@ -60,6 +60,18 @@ jobs:
         if: runner.os == 'Windows'
         run: vcpkg install sqlite3:x64-windows
 
+      - name: Reject project layer without storage
+        if: runner.os == 'Linux'
+        run: |
+          if cmake -S . -B build-project-invalid \
+            -DAERIS_BUILD_STORAGE=OFF \
+            -DAERIS_BUILD_PROJECT=ON \
+            -DAERIS_BUILD_TESTS=OFF \
+            -DAERIS_BUILD_TOOLS=OFF; then
+            echo "AERIS_BUILD_PROJECT unexpectedly configured without AERIS_BUILD_STORAGE"
+            exit 1
+          fi
+
       - name: Configure (Unix)
         if: runner.os != 'Windows'
         run: >-
