@@ -5,11 +5,6 @@
 #include "unfold.hpp"
 #include "world_loader.hpp"
 
-#include "aeris/geo/rotation.hpp"
-#include "aeris/geo/wgs84.hpp"
-#include "aeris/geometry/planar.hpp"
-#include "aeris/view/globe_polygon.hpp"
-
 #include <array>
 #include <cmath>
 #include <cstdlib>
@@ -18,10 +13,6 @@
 #include <string>
 
 namespace {
-
-[[nodiscard]] double radians(const double degrees) noexcept {
-    return degrees * aeris::geo::kPi / 180.0;
-}
 
 [[nodiscard]] bool scene_has_expected_geometry(
     const aeris::viewer::SceneData& scene
@@ -92,7 +83,8 @@ namespace {
         return false;
     }
 
-    const auto& sample = bundle.guides.front().vertices[bundle.guides.front().vertices.size() / 3U];
+    const auto& sample =
+        bundle.guides.front().vertices[bundle.guides.front().vertices.size() / 3U];
     const auto at_start = aeris::viewer::interpolate_unfold_vertex(sample, 0.0);
     const auto at_end = aeris::viewer::interpolate_unfold_vertex(sample, 1.0);
     if (!near(at_start.x, sample.globe.x, 0.0) ||
@@ -128,70 +120,6 @@ void print_scene_failure(
         << " vertices=" << scene.vertices
         << " max_refinement=" << scene.max_refinement_rounds
         << '\n';
-}
-
-void diagnose_camera_record_111(const aeris::source::Result& world) {
-    const auto beta = aeris::geo::authalic_latitude(radians(10.0));
-    if (!beta.ok()) {
-        std::cerr << "camera diagnostic could not derive authalic latitude\n";
-        return;
-    }
-    const aeris::geo::Mat3 world_to_view = aeris::geo::multiply(
-        aeris::geo::rotation_y(beta.value),
-        aeris::geo::rotation_z(-radians(45.0))
-    );
-
-    const std::string wanted = "ne_110m_land:v5.1.2:record:111";
-    for (const auto& feature : world.features) {
-        if (feature.stable_id != wanted) {
-            continue;
-        }
-
-        for (std::size_t ring_index = 0U; ring_index < feature.rings.size(); ++ring_index) {
-            aeris::view::GlobePolygonOptions options{};
-            options.curve.geometric_tolerance_m = 5'000.0;
-            options.curve.horizon_tolerance_m = 0.01;
-            options.curve.max_subdivision_depth = 32U;
-            options.curve.max_root_iterations = 80U;
-            options.curve.max_segments = 1'000'000U;
-            options.horizon_arc_tolerance_m = 500.0;
-            options.max_horizon_arc_segments = 1'000'000U;
-            options.max_output_rings = 4096U;
-
-            std::cerr << "camera45/10 diagnostic " << wanted
-                      << " ring=" << ring_index
-                      << " interior=" << static_cast<unsigned>(feature.rings[ring_index].geometry.interior_side)
-                      << '\n';
-
-            for (unsigned round = 1U; round <= 22U; ++round) {
-                const auto finite = aeris::view::project_visible_wgs84_linear_polygon_ring(
-                    feature.rings[ring_index].geometry,
-                    world_to_view,
-                    options,
-                    aeris::geo::authalic_radius_m()
-                );
-                std::cerr
-                    << "  round=" << round
-                    << " curve_tol=" << options.curve.geometric_tolerance_m
-                    << " arc_tol=" << options.horizon_arc_tolerance_m
-                    << " error=" << static_cast<unsigned>(finite.error)
-                    << " curve_error=" << static_cast<unsigned>(finite.curve_error)
-                    << " crossings=" << finite.horizon_crossings
-                    << " rings=" << finite.rings.size()
-                    << " planar_area=" << finite.planar_signed_area_m2
-                    << " component_areas=";
-                for (const auto& ring : finite.rings) {
-                    std::cerr << ' ' << aeris::geometry::signed_planar_area(ring);
-                }
-                std::cerr << '\n';
-
-                options.curve.geometric_tolerance_m *= 0.5;
-                options.horizon_arc_tolerance_m *= 0.5;
-            }
-        }
-        return;
-    }
-    std::cerr << "camera diagnostic could not find " << wanted << '\n';
 }
 
 }  // namespace
@@ -246,6 +174,10 @@ int main(int argc, char** argv) {
             << '\n';
     }
 
+    // Retained permanently because the first Unfold lifecycle probe discovered
+    // a near-horizon numerically negligible derived component at this camera.
+    // Verified globe fill must therefore remain valid for this arbitrary user
+    // orientation, not only for the original 15E/20N conformance camera.
     aeris::viewer::SceneRequest camera_regression{};
     camera_regression.mode = aeris::viewer::ViewMode::globe;
     camera_regression.quality = aeris::viewer::SceneQuality::verified;
@@ -255,7 +187,6 @@ int main(int argc, char** argv) {
         aeris::viewer::build_scene(*loaded.world, camera_regression);
     if (!scene_has_expected_geometry(camera_scene)) {
         print_scene_failure("Globe camera regression 45E/10N", camera_scene);
-        diagnose_camera_record_111(*loaded.world);
         return EXIT_FAILURE;
     }
     std::cout << "Globe camera regression 45E/10N: PASS"
