@@ -9,6 +9,8 @@ add_executable(aeris_viewer
     map_canvas.cpp
     scene_builder.cpp
     scene_controller.cpp
+    unfold.cpp
+    unfold_controller.cpp
     world_loader.cpp
 )
 
@@ -24,6 +26,7 @@ aeris_enable_warnings(aeris_viewer)
 add_executable(aeris_viewer_scene_probe
     scene_probe.cpp
     scene_builder.cpp
+    unfold.cpp
     world_loader.cpp
 )
 target_link_libraries(aeris_viewer_scene_probe PRIVATE AERIS::core)
@@ -35,6 +38,8 @@ add_executable(aeris_viewer_controller_probe
     controller_probe.cpp
     scene_builder.cpp
     scene_controller.cpp
+    unfold.cpp
+    unfold_controller.cpp
     world_loader.cpp
 )
 target_link_libraries(aeris_viewer_controller_probe PRIVATE AERIS::core Qt6::Core)

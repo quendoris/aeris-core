@@ -44,10 +44,6 @@ namespace {
 }
 
 bool test_thin_horizon_sliver_refines() {
-    // On the identity orthographic camera the horizon is lambda = +/-90 deg.
-    // The intended region is only 0.1 deg inside that horizon, so its visible
-    // screen footprint is extremely thin and coarse finite chords are a useful
-    // stress case for orientation and area-stability verification.
     const auto ring = make_ring(
         {
             {radians(89.9), radians(-10.0)},
@@ -78,6 +74,7 @@ bool test_thin_horizon_sliver_refines() {
             << " finite_error=" << static_cast<int>(result.polygon.error)
             << " rounds=" << result.refinement_rounds
             << " area=" << result.polygon.planar_signed_area_m2
+            << " component_delta=" << result.estimated_max_component_area_error_m2
             << " estimated_delta=" << result.estimated_planar_area_error_m2
             << " allowed_delta=" << result.allowed_planar_area_delta_m2
             << '\n';
@@ -94,15 +91,88 @@ bool test_thin_horizon_sliver_refines() {
     }
     if (!result.topology_stable ||
         !result.component_orientation_stable ||
+        !result.component_area_stable ||
         result.polygon.horizon_crossings != 2U ||
         result.polygon.rings.size() != 1U ||
         !(result.polygon.planar_signed_area_m2 > 0.0)) {
-        std::cerr << "thin sliver did not preserve verified topology/orientation\n";
+        std::cerr << "thin sliver did not preserve verified topology/orientation/component convergence\n";
         return false;
     }
     if (!(result.estimated_planar_area_error_m2 <=
           result.allowed_planar_area_delta_m2)) {
-        std::cerr << "thin sliver accepted without area convergence\n";
+        std::cerr << "thin sliver accepted without aggregate area convergence\n";
+        return false;
+    }
+
+    return true;
+}
+
+bool test_numerically_zero_component_does_not_invent_orientation() {
+    const double just_inside_horizon = aeris::geo::kHalfPi - 1e-7;
+    const auto ring = make_ring(
+        {
+            {just_inside_horizon, radians(-1.0)},
+            {radians(100.0), radians(-1.0)},
+            {radians(100.0), radians(1.0)},
+            {just_inside_horizon, radians(1.0)},
+        },
+        aeris::geometry::RingInteriorSide::left
+    );
+    if (ring.vertices.size() != 4U) {
+        std::cerr << "negligible-component fixture failed to canonicalize\n";
+        return false;
+    }
+
+    auto options = coarse_verified_options();
+    options.initial.curve.geometric_tolerance_m = 1e-3;
+    options.initial.horizon_arc_tolerance_m = 1e-4;
+    options.max_refinement_rounds = 6U;
+
+    const auto result =
+        aeris::view::project_visible_wgs84_linear_polygon_ring_verified(
+            ring,
+            aeris::geo::Mat3{},
+            options,
+            aeris::geo::authalic_radius_m()
+        );
+
+    if (!result.ok()) {
+        std::cerr
+            << "negligible-component verification failed: error="
+            << static_cast<int>(result.error)
+            << " finite_error=" << static_cast<int>(result.polygon.error)
+            << " rounds=" << result.refinement_rounds
+            << " crossings=" << result.polygon.horizon_crossings
+            << " rings=" << result.polygon.rings.size()
+            << " significant=" << result.significant_component_count
+            << " negligible=" << result.negligible_component_count
+            << " floor=" << result.component_area_resolution_floor_m2
+            << " component_delta=" << result.estimated_max_component_area_error_m2
+            << " area=" << result.polygon.planar_signed_area_m2
+            << '\n';
+        return false;
+    }
+
+    if (!result.topology_stable ||
+        !result.component_orientation_stable ||
+        !result.component_area_stable ||
+        result.polygon.horizon_crossings != 2U ||
+        result.polygon.rings.size() != 1U ||
+        result.significant_component_count != 0U ||
+        result.negligible_component_count != 1U ||
+        !(result.component_area_resolution_floor_m2 > 0.0) ||
+        result.estimated_max_component_area_error_m2 >
+            result.component_area_resolution_floor_m2) {
+        std::cerr
+            << "numerically zero component was not explicitly/stably classified:"
+            << " crossings=" << result.polygon.horizon_crossings
+            << " rings=" << result.polygon.rings.size()
+            << " significant=" << result.significant_component_count
+            << " negligible=" << result.negligible_component_count
+            << " floor=" << result.component_area_resolution_floor_m2
+            << " component_delta=" << result.estimated_max_component_area_error_m2
+            << " area=" << result.polygon.planar_signed_area_m2
+            << '\n';
         return false;
     }
 
@@ -141,6 +211,7 @@ bool test_invalid_verification_options_fail_at_boundary() {
 
 int main() {
     if (!test_thin_horizon_sliver_refines() ||
+        !test_numerically_zero_component_does_not_invent_orientation() ||
         !test_invalid_verification_options_fail_at_boundary()) {
         return EXIT_FAILURE;
     }

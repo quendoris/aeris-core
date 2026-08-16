@@ -62,12 +62,12 @@ jobs:
           --target aeris_viewer aeris_viewer_scene_probe aeris_viewer_controller_probe
           --parallel 2
 
-      - name: Build all real viewer scenes
+      - name: Build all real viewer scenes and unfold endpoints
         run: >-
           ./build-viewer/viewer/aeris_viewer_scene_probe
           --snapshot ${{ runner.temp }}/natural-earth-v5.1.2
 
-      - name: Verify preview/cancel/verified interaction lifecycle
+      - name: Verify scene and unfold stale-result ownership
         run: >-
           ./build-viewer/viewer/aeris_viewer_controller_probe
           --snapshot ${{ runner.temp }}/natural-earth-v5.1.2
@@ -88,10 +88,20 @@ jobs:
           --snapshot ${{ runner.temp }}/natural-earth-v5.1.2
           --render ${{ runner.temp }}/aeris-viewer-globe.png
 
-      - name: Upload viewer screenshot
+      - name: Render non-normative unfold midpoint screenshot
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: >-
+          ./build-viewer/viewer/aeris_viewer
+          --snapshot ${{ runner.temp }}/natural-earth-v5.1.2
+          --render-unfold ${{ runner.temp }}/aeris-viewer-unfold.png
+
+      - name: Upload viewer screenshots
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: aeris-viewer-globe
-          path: ${{ runner.temp }}/aeris-viewer-globe.png
+          name: aeris-viewer
+          path: |
+            ${{ runner.temp }}/aeris-viewer-globe.png
+            ${{ runner.temp }}/aeris-viewer-unfold.png
           if-no-files-found: error
           retention-days: 14

@@ -12,7 +12,7 @@ AERIS is in **early implementation**.
 
 The reference core now includes WGS84/authalic mathematics, spherical rotation, independent Sinusoidal and Mollweide primitives, canonical geographic edge/ring semantics, adaptive finite-geometry verification, projection seam handling for supported polar winding and general zero-winding rings, horizon-aware authalic orthographic globe curves, explicit filled visible-globe horizon topology with verified adaptive refinement, source acquisition/provenance, a strict minimal Polygon Shapefile reader, and pinned real-world whole-land integration proofs.
 
-An optional Qt 6 Widgets viewer is now under active development as a separate frontend over the Qt-free reference core. The current viewer can load the exact pinned Natural Earth demo snapshot, show a verified filled authalic globe, rotate the globe interactively through an explicit wireframe preview state, and switch to verified Sinusoidal or Mollweide flat views. The visual `Unfold` transition is deliberately disabled until its interpolation semantics receive a separate stable contract.
+An optional Qt 6 Widgets viewer is implemented as a separate frontend over the Qt-free reference core. It can load the exact pinned Natural Earth demo snapshot, show a verified filled authalic globe, rotate the globe interactively through an explicit wireframe preview state, switch to verified Sinusoidal or Mollweide flat views, and animate an explanatory `Unfold` transition between independently verified globe and planar endpoints.
 
 The project format and final Philbrick Sinu-Mollweide composition remain drafts. No draft `.aeris` file or draft composite-projection output is promised long-term compatibility until the relevant contracts are explicitly frozen.
 
@@ -49,15 +49,16 @@ A separate networked **Source Compatibility** workflow verifies exact pinned thi
 
 ## Interactive viewer
 
-The first AERIS viewer is an **optional Qt 6 Widgets frontend**. Building it does not make Qt a dependency of `aeris_core`; `AERIS_BUILD_VIEWER` is `OFF` by default.
+The AERIS viewer is an **optional Qt 6 Widgets frontend**. Building it does not make Qt a dependency of `aeris_core`; `AERIS_BUILD_VIEWER` is `OFF` by default.
 
-The current viewer intentionally exposes the distinction between interactive preview and mathematically verified geometry:
+The viewer explicitly distinguishes interactive preview, verified geometry, and explanatory transition states:
 
 - while the globe is dragged, the canvas shows a horizon-aware **PREVIEW** wireframe;
-- when the drag ends, the stale verified job is canceled/ignored and the new camera is recomputed in the background through the verified filled-globe path;
+- when the drag ends, stale verified work is canceled/ignored and the new camera is recomputed in the background through the verified filled-globe path;
 - only the completed result is marked **VERIFIED**;
 - Sinusoidal and Mollweide views use the verified piecewise equal-area path;
-- the disabled `Unfold` control is a visible promise of future functionality, not a placeholder that silently interpolates incompatible geometry.
+- **Unfold** prepares verified globe and flat endpoint scenes in the background, then animates only presentation geometry between them;
+- intermediate Unfold frames are visibly labeled **UNFOLD / non-normative** and are never used as export, measurement, GIS, or project geometry.
 
 ### Fetch the exact demo world
 
@@ -112,9 +113,9 @@ Current controls:
 - **mouse wheel** — zoom;
 - **Sin** — verified Sinusoidal flat world;
 - **Moll** — verified Mollweide flat world;
-- **Unfold** — intentionally disabled until the animation/interpolation contract is implemented.
+- **Unfold** — from a verified Globe, prepare independent verified endpoints and animate to the most recently selected flat view (Mollweide by default). The 1.4 s intermediate transition is explanatory only.
 
-The dedicated Viewer CI uses exact pinned source bytes and verifies three real scenes, preview/cancel/verified job ordering, offscreen startup, and a complete rendered workbench screenshot.
+The dedicated Viewer CI uses exact pinned source bytes and verifies the three real scenes, a permanent arbitrary-camera globe regression at `45°E, 10°N`, preview/cancel/verified scene ordering, independent stale-result ownership for Unfold preparation, offscreen startup, a complete rendered workbench screenshot, and a rendered midpoint Unfold frame.
 
 ## First real-world milestones
 
@@ -126,7 +127,9 @@ The same pinned geometry also passes the authalic orthographic globe path. With 
 
 The verified filled-globe proof starts deliberately coarse at `5000 m` curve tolerance and `500 m` horizon-arc tolerance, then adaptively proves each source ring rather than using a fixed special-case quality setting. The accepted world contains 71 closed fill rings and 3078 fill vertices; the most difficult real ring required 12 refinement rounds and reached approximately `2.441 m` curve tolerance and `0.244 m` limb-arc tolerance. The final diagnostic uses 71 explicit closed land subpaths, 74 independently recomputed open coastline paths, and zero SVG `clipPath` elements.
 
-See [Real-World Conformance Proofs](docs/REAL-WORLD-CONFORMANCE.md) for exact resource SHA-256 identities and measured integration evidence, [Projection Seam Topology](docs/PROJECTION-SEAM-TOPOLOGY.md) for planar cut semantics, and [Globe Horizon Topology](docs/GLOBE-HORIZON-TOPOLOGY.md) for the curve/fill/verification contract and its explicit numerical non-claims.
+A later arbitrary-camera regression at `45°E, 10°N` exposed a derived horizon component whose true screen area is below the conservative binary64 orientation-resolution floor. The verified globe contract now distinguishes numerically significant components from numerically negligible derived components without deleting either geometry: significant components must retain canonical orientation, while negligible components must stabilize their classification and their own finite screen area. Aggregate convergence is still required independently.
+
+See [Real-World Conformance Proofs](docs/REAL-WORLD-CONFORMANCE.md) for exact resource SHA-256 identities and measured integration evidence, [Projection Seam Topology](docs/PROJECTION-SEAM-TOPOLOGY.md) for planar cut semantics, [Globe Horizon Topology](docs/GLOBE-HORIZON-TOPOLOGY.md) for the curve/fill/verification contract and its explicit numerical non-claims, and [Unfold Transition](docs/UNFOLD-TRANSITION.md) for the separation between verified endpoints and explanatory animation frames.
 
 ## Planned project and export formats
 
@@ -164,6 +167,7 @@ See [ACKNOWLEDGEMENTS.md](ACKNOWLEDGEMENTS.md) for the historical lineage, [docs
 - [Canonical Geographic Geometry](docs/CANONICAL-GEOMETRY.md)
 - [Projection Seam Topology](docs/PROJECTION-SEAM-TOPOLOGY.md)
 - [Globe Horizon Topology](docs/GLOBE-HORIZON-TOPOLOGY.md)
+- [Unfold Transition](docs/UNFOLD-TRANSITION.md)
 - [Sinu-Mollweide Projection Contract — Draft](docs/PROJECTION-SINU-MOLLWEIDE.md)
 - [Source Adapter Contract](docs/SOURCE-ADAPTERS.md)
 - [Source Pipeline](docs/SOURCE-PIPELINE.md)

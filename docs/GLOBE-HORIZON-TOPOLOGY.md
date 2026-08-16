@@ -9,18 +9,9 @@ The current implementation is a deterministic CPU reference path and conformance
 
 ## 1. Horizon topology is geometry
 
-A closed geographic ring projected onto a globe is generally only partly visible.
+A closed geographic ring projected onto a globe is generally only partly visible. Merely projecting the complete ring and applying a circular renderer clip does not derive the actual visible geometry.
 
-Projecting the complete ring and applying a circular SVG clip can conceal the hidden hemisphere visually, but it does not derive the actual visible geometry. In particular, downstream renderers would not know:
-
-- where a canonical source edge intersects the mathematical horizon;
-- which pieces of the source boundary remain visible;
-- which oriented globe-limb arcs close a visible filled region;
-- how several visible components relate to one canonical ring.
-
-AERIS therefore derives horizon intersections and closure topology before export.
-
-The reference curve path is:
+AERIS therefore derives horizon intersections, visible open source-boundary fragments, oriented globe-limb arcs required to close visible filled regions, and multiple visible components belonging to one canonical geographic ring.
 
 ```text
 canonical wgs84-linear-v1 edge
@@ -38,41 +29,25 @@ adaptive curve subdivision
 numerical depth(t) = 0 horizon roots
         ↓
 visible open planar fragments
-```
-
-The filled-region layer then consumes those directed fragments:
-
-```text
-visible directed source chains
-        +
-canonical RingInteriorSide
         ↓
-ordered horizon endpoints
+RingInteriorSide + ordered horizon endpoints
         ↓
 orientation-preserving limb connectors
         ↓
-closed visible planar region components
+closed visible planar components
         ↓
 verified finite refinement
 ```
 
-No hidden continuation is replaced by a straight chord, and no circular clip path is used to manufacture semantic geometry.
+No hidden continuation is replaced by a straight chord, and no circular clip path manufactures semantic geometry.
 
-## 2. Authalic globe
+## 2. Authalic globe and view-space convention
 
-The globe uses the same WGS84 authalic transform and authalic radius as the equal-area reference core.
-
-For a canonical geodetic point `(lambda, phi)`, AERIS first evaluates
+The globe uses the same WGS84 authalic transform and authalic radius as the equal-area reference core. For a canonical geodetic point `(lambda, phi)`:
 
 ```text
 beta = authalic_latitude(phi)
 ```
-
-and converts `(lambda, beta)` to the unit sphere.
-
-This places the view on the same authalic surface used by the equal-area primitive reference math. It does not make the orthographic screen projection itself equal-area, and the screen area of a visible globe polygon MUST NOT be compared with WGS84 geographic area as an equal-area invariant.
-
-## 3. View-space convention
 
 The reference orthographic convention is:
 
@@ -83,7 +58,7 @@ screen-up    = +Z
 positive depth = visible hemisphere
 ```
 
-After the world-to-view rotation, a sphere point `v` becomes `v'` and
+After world-to-view rotation:
 
 ```text
 x_screen = R_q * v'.y
@@ -91,164 +66,71 @@ y_screen = R_q * v'.z
 depth    = R_q * v'.x
 ```
 
-where `R_q` is the WGS84 authalic radius.
+A point is on the mathematical horizon when `depth = 0` and visible when `depth >= 0`.
 
-A point is on the mathematical horizon when
+The orthographic screen projection is **not** equal-area. Its screen polygon area is never compared with WGS84 geographic area as an equal-area invariant.
 
-```text
-depth = 0
-```
+## 3. Camera construction
 
-and is on the visible hemisphere when
-
-```text
-depth >= 0.
-```
-
-## 4. Camera-center construction
-
-For a requested camera center with longitude `lambda_0` and authalic latitude `beta_0`, the current reference camera uses
+For requested camera longitude `lambda_0` and authalic latitude `beta_0`:
 
 ```text
 world_to_view = R_y(beta_0) * R_z(-lambda_0)
 ```
 
-under the AERIS rotation-matrix convention.
+Public geodetic latitude is converted to authalic latitude first. Free camera rotation is view/session state and does not silently mutate flat-map projection parameters.
 
-When the public input latitude is geodetic, it is converted to authalic latitude before constructing this rotation.
+## 4. Canonical source-edge semantics remain unchanged
 
-The pinned Natural Earth globe proofs currently use:
-
-```text
-camera center longitude:         +15 degrees
-camera center geodetic latitude: +20 degrees
-```
-
-Free camera rotation is view state. It does not by itself change the mathematical orientation of a future flat-map projection.
-
-## 5. Canonical edge semantics remain unchanged
-
-The horizon layer consumes the existing canonical `wgs84-linear-v1` edge.
-
-For source endpoints `(lambda_0, phi_0)` and `(lambda_1, phi_1)`, interpolation remains
+The horizon layer consumes canonical `wgs84-linear-v1` edges:
 
 ```text
 lambda(t) = lambda_0 + t (lambda_1 - lambda_0)
 phi(t)    = phi_0    + t (phi_1    - phi_0)
-0 <= t <= 1.
+0 <= t <= 1
 ```
 
-Longitudes may already be unwrapped outside `[-pi, pi]`. The globe layer MUST NOT independently rewrap them and thereby alter source traversal.
+Longitudes may already be unwrapped outside `[-pi, pi]`; the globe layer MUST NOT independently rewrap them. Authalic latitude is evaluated from each interpolated geodetic-latitude sample. Consecutive identical source coordinates define a zero-length edge.
 
-Authalic latitude is evaluated from each interpolated geodetic latitude sample. AERIS does not replace the canonical source edge with linear interpolation in authalic latitude.
+## 5. Adaptive 3D curve subdivision
 
-Consecutive identical source coordinates define a zero-length edge and contribute no visible segment.
-
-## 6. Adaptive 3D curve subdivision
-
-The reference implementation evaluates five samples for each recursive interval:
+Each recursive interval evaluates five samples:
 
 ```text
 t = 0, 1/4, 1/2, 3/4, 1
 ```
 
-relative to that interval.
+Refinement is measured in full view-space `(x, y, depth)`.
 
-Geometric refinement is measured in full view-space `(x, y, depth)`, not only in screen coordinates. Intermediate samples are compared with the 3D chord joining the interval endpoints.
+An interval may be emitted only when 3D geometric deviation is within tolerance and the sampled visibility pattern is topologically resolved. Equal endpoint visibility requires zero sampled visibility transitions; different endpoint visibility requires exactly one. Otherwise the interval subdivides subject to explicit resource ceilings.
 
-An interval can be emitted only when:
+This classifier is deterministic but is **not interval arithmetic**. AERIS does not claim formal enclosure of every adversarial unsampled horizon root.
 
-1. the 3D geometric deviation is within the configured tolerance; and
-2. the sampled visibility pattern is topologically resolved for the endpoint state:
-   - equal endpoint visibility requires zero sampled visibility transitions;
-   - different endpoint visibility requires exactly one sampled transition.
+## 6. Horizon root solving and visible curves
 
-Otherwise the interval is subdivided, subject to explicit depth and segment ceilings.
+A sign-changing horizon root of `depth(t)=0` is solved by deterministic bisection. Failure within `max_root_iterations` is explicit non-convergence.
 
-### 6.1 Important non-claim
+A canonical edge may emit a fully visible polyline, a fragment ending or beginning at the horizon, or no visible geometry. Hidden continuation is not emitted. If a closed ring is interrupted by the hidden hemisphere, returned visible fragments remain open until the fill layer derives limb closure.
 
-This five-sample classifier is a deterministic numerical reference contract. It is **not** interval arithmetic and does not formally prove that an adversarial smooth curve cannot contain an unsampled pair of horizon crossings inside an accepted interval.
+Ordinary sign-changing crossings of a closed continuous ring occur in pairs. Tangent contacts and exact source vertices on the horizon remain explicit degeneracy classes rather than being shifted by arbitrary epsilons.
 
-Synthetic conformance cases, geometric refinement, cross-platform tests, and pinned real-world data constrain the implementation, but AERIS MUST NOT describe the current classifier as exhaustive root enclosure.
+## 7. Filled visible-region topology
 
-A future stronger reference may add analytical bounds or interval/root isolation without changing canonical geographic edge semantics.
+A visible geographic region must close along the globe limb. `RingInteriorSide` is mandatory because one boundary can describe complementary geographic interiors.
 
-## 7. Horizon root solving
+For partial visibility, horizon endpoints are ordered by limb angle. `left` connects compatible endpoints in increasing angle; `right` connects in decreasing angle. Several visibility intervals may produce several independent output rings.
 
-When an accepted interval has one visible endpoint and one hidden endpoint, AERIS brackets a sign-changing root of
+AERIS does not use “always take the shorter arc”. Synthetic conformance includes a four-crossing/two-component case and a same-boundary left/right case proving short-region versus long-complement behavior.
 
-```text
-depth(t) = 0
-```
+## 8. Zero-crossing minor and major regions
 
-and solves it by deterministic bisection.
-
-The solve terminates only when sampled absolute depth is within `horizon_tolerance_m`, or when finite-precision parameter collapse still leaves a bracket endpoint within that same tolerance.
-
-Failure within `max_root_iterations` is explicit non-convergence.
-
-The solved horizon point becomes an endpoint of the visible fragment. Hidden continuation is not emitted.
-
-## 8. Visible curve results
-
-A canonical edge may emit:
-
-- one fully visible polyline;
-- one visible fragment terminated at the horizon;
-- one visible fragment beginning at the horizon;
-- no visible geometry.
-
-A complete ring applies the same contract to ordinary and closing edges, then merges adjacent visible fragments that remain continuous through source vertices.
-
-If visibility is interrupted by the hidden hemisphere, returned pieces remain **open** planar polylines. The curve layer does not invent a limb closure.
-
-Fully visible rings remain closed through ordinary source-edge continuity.
-
-## 9. Closed-ring horizon parity
-
-For ordinary sign-changing intersections, a closed continuous ring must enter and leave the visible hemisphere in pairs.
-
-The real-world integration proof therefore requires an even number of reported sign-changing horizon crossings for every closed source ring.
-
-A tangent contact may touch `depth = 0` without changing visibility and is not necessarily counted as a crossing by this rule.
-
-Exact source vertices on the horizon and tangent ownership remain explicit degeneracy classes. They must not be silently moved by an arbitrary epsilon.
-
-## 10. Filled visible-region topology
-
-A filled geographic region cannot stop at an open horizon fragment. The visible intersection of the geographic interior with the front hemisphere must be closed along the globe limb.
-
-The fill layer consumes the directed visible source chains produced by the curve layer. It does not re-project the hidden source boundary into the plane.
-
-Canonical `RingInteriorSide` is mandatory because the same boundary can describe complementary geographic regions.
-
-For a partially visible ring:
-
-- chain starts and ends must lie on the mathematical limb;
-- endpoints are ordered by angular position on the limb;
-- `RingInteriorSide::left` connects an end to the next compatible start in increasing limb angle;
-- `RingInteriorSide::right` connects in decreasing limb angle;
-- a ring with several visibility intervals may produce several independent visible output rings.
-
-AERIS therefore does **not** use the heuristic “connect the two crossings with the shorter arc”. The same geographic boundary can intentionally select the long complementary limb arc when its canonical interior lies on the other side.
-
-Synthetic conformance includes a four-crossing case that produces two visible components and a same-boundary left/right case that proves short-region versus long-complement behavior.
-
-## 11. Zero-crossing minor and major regions
-
-When a ring has no sign-changing horizon crossings, curve visibility alone does not distinguish every possible interior.
-
-AERIS uses the canonical WGS84 semantic area and `RingInteriorSide` to classify whether the intended source region is smaller or larger than one half of the physical authalic Earth.
-
-The comparison uses
+When a ring has no sign-changing crossings, AERIS uses canonical WGS84 semantic area and `RingInteriorSide` to classify the intended region against one half of the physical authalic Earth:
 
 ```text
 2 * pi * R_q^2
 ```
 
-where `R_q` is the physical WGS84 authalic radius. It MUST NOT use a caller-selected display radius.
-
-The supported zero-crossing cases are:
+This MUST use the physical WGS84 authalic radius, not display scale.
 
 ```text
 minor + fully hidden  -> empty visible region
@@ -257,173 +139,156 @@ major + fully hidden  -> full visible disk
 major + fully visible -> full limb plus source boundary as exclusion/hole
 ```
 
-An area too close to exactly one hemisphere for the current numerical uncertainty is rejected as ambiguous rather than guessed.
+A region numerically too close to exactly one hemisphere is rejected as ambiguous.
 
-## 12. Finite limb approximation
+## 9. Finite limb approximation
 
-Derived horizon arcs are emitted as explicit finite polylines.
+Derived horizon arcs are explicit finite polylines. `horizon_arc_tolerance_m` is a sagitta-style tolerance that determines maximum angular step.
 
-`horizon_arc_tolerance_m` is a sagitta-style geometric tolerance on the globe limb. The implementation determines a maximum angular step and derives the number of required arc segments from the requested angular span.
-
-A full disk is therefore represented by a finite regular polygon, not an ideal analytical circle hidden inside the renderer.
-
-For a full-limb polygon with `N` equal segments and view radius `R`, the exact finite polygon area is
+For a full-limb polygon with `N` equal segments and view radius `R`:
 
 ```text
 A_N = (N R^2 / 2) sin(2 pi / N)
 ```
 
-and tests compare against this finite object rather than pretending the emitted geometry has exact area `pi R^2`.
+Tests compare against this emitted finite polygon rather than an ideal analytical circle. Arc segment ceilings are explicit; quality is never silently reduced.
 
-Arc segment ceilings are explicit. Quality is never silently reduced to fit a resource limit.
+## 10. Why verified refinement is required
 
-## 13. Why one finite fill is not enough
+A finite coastline approximation can be visually adequate as a stroke while still inverting a very thin filled component near the horizon. Natural Earth Antarctica exposed this distinction.
 
-A coarse finite coastline approximation may be acceptable for a wireframe but still be topologically unsafe for a filled region extremely close to the horizon.
+AERIS therefore separates a deterministic one-shot finite globe polygon projection from a high-level verified projection that refines until numerical and topological observables stabilize.
 
-Pinned Natural Earth Antarctica exposed this distinction. With an initial coastline tolerance of `5000 m` and limb-arc tolerance of `500 m`, the correct five visible components were found, but some extremely thin near-limb components acquired the wrong signed planar orientation because their finite chords crossed the derived limb boundary.
+## 11. Verified adaptive fill refinement
 
-Increasing point count by a fixed arbitrary rule would hide rather than solve this problem.
-
-AERIS therefore separates:
-
-```text
-finite globe polygon projection
-```
-
-from
-
-```text
-verified globe polygon projection
-```
-
-The former is a deterministic one-shot approximation at caller-provided tolerances. The latter proves that the finite result has stabilized sufficiently for use as verified visible fill geometry.
-
-## 14. Verified adaptive fill refinement
-
-The high-level verified fill starts from explicit finite tolerances and repeatedly halves both:
+The verifier repeatedly halves:
 
 ```text
 curve geometric tolerance
 horizon arc tolerance
 ```
 
-The horizon root tolerance, root-iteration ceiling, subdivision depth ceiling, segment ceilings, and output-ring ceiling are not silently relaxed.
+while horizon-root tolerance and all resource ceilings remain fixed. At least two acceptable finite approximations are required.
 
-At least two successful finite approximations are required.
+### 11.1 Significant and numerically negligible components
 
-For partial-horizon geometry, verification requires:
-
-1. **component orientation** — every output component has the signed orientation implied by `RingInteriorSide`;
-2. **topology stability** — consecutive acceptable refinements have the same horizon-crossing count and output-ring count;
-3. **screen-area convergence** — the absolute signed planar-area difference between consecutive acceptable approximations is within the declared stability budget.
-
-The convergence observable is
+For each finite result AERIS computes a conservative binary64 screen-area resolution floor:
 
 ```text
-Delta_A = |A_n - A_(n-1)|
+F = 2048 * epsilon_double * max(
+    1,
+    |A_total|,
+    |A_visible_disk|
+)
 ```
 
-with allowed delta
+For partial-horizon geometry:
+
+```text
+|A_component| > F   -> significant
+|A_component| <= F  -> numerically negligible
+```
+
+A **significant** component MUST have the orientation implied by canonical `RingInteriorSide`.
+
+A **numerically negligible** component remains present in finite geometry, but AERIS does not invent or claim a meaningful orientation for an area below the screen-area resolution of the binary64 numerical model.
+
+This is not a deletion threshold and is not renderer simplification.
+
+### 11.2 Stable topology and significance classification
+
+Consecutive acceptable refinements must preserve:
+
+- horizon-crossing count;
+- output-ring count;
+- ordered significant/negligible classification.
+
+A change in any item requires further refinement. Thus a negligible classification itself must converge; a transient coarse small area cannot be accepted merely because it happens to fall below the floor once.
+
+### 11.3 Per-component screen-area convergence
+
+Every corresponding derived component must independently converge. For component areas `A_i,n-1` and `A_i,n`, allowed delta is:
 
 ```text
 max(
     absolute_area_stability_tolerance,
-    relative_area_stability_tolerance * max(|A_n|, |A_(n-1)|, 1),
-    explicit binary64 numerical floor
+    relative_area_stability_tolerance * max(
+        |A_i,n-1|,
+        |A_i,n|,
+        1
+    ),
+    max(F_n-1, F_n)
 )
 ```
 
-This is only a convergence check between finite orthographic approximations. **Orthographic screen area is not a geographic area invariant and is never compared with WGS84 semantic area as though the view were equal-area.**
+The verifier records the largest per-component delta as telemetry. This prevents cancellation between unrelated components from hiding instability in an aggregate check.
 
-A low-level `orientation_mismatch` is refineable because it can arise from a coarse finite chord around a true thin near-limb region. Other low-level geometric failures remain fail-closed.
+### 11.4 Aggregate screen-area convergence
 
-If stability is not reached before `max_refinement_rounds`, the verified result fails. There is no automatic quality downgrade.
+Aggregate signed orthographic screen area must also converge under the same absolute/relative/binary64-floor principle.
 
-## 15. Synthetic verified stress case
+Orthographic screen area is only a convergence observable between finite approximations of the same view-space region. It is never treated as WGS84 geographic area.
 
-The verified conformance suite includes a deliberately thin region whose visible boundary is only `0.1 degree` inside the identity-camera horizon.
+### 11.5 Failure behavior
 
-The proof starts deliberately coarse:
+A low-level `orientation_mismatch` is refineable because a coarse chord can invert a true thin region. Other low-level geometric failures remain fail-closed.
 
-```text
-curve tolerance:       5000 m
-horizon arc tolerance:  500 m
-relative area stability: 0.5%
-absolute area stability: 1 m^2
-```
+Verification fails explicitly if significant orientation, topology/significance classification, per-component area, or aggregate area does not stabilize before `max_refinement_rounds`. There is no automatic quality downgrade.
 
-With a twelve-round ceiling this fixture was correctly **rejected** because the two latest finite screen areas had not converged enough. Increasing only the proof ceiling to eighteen rounds allowed the same unchanged stability budget to converge.
+## 12. Synthetic verified stress cases
 
-This test exists specifically to prevent the verified wrapper from declaring a visually plausible but numerically unstable near-limb fill complete.
+The suite contains two complementary stress classes.
 
-## 16. Pinned Natural Earth proofs
+A thin but numerically significant region starts deliberately coarse at `5000 m` curve tolerance and `500 m` limb-arc tolerance. Twelve rounds were correctly insufficient; eighteen rounds allow the unchanged stability budget to converge.
 
-The Source Compatibility workflow runs the same exact pinned Natural Earth `ne_110m_land` bytes through both curve and filled-region paths.
+A second fixture isolates a visible strip entering the front hemisphere by only `1e-7 rad`. It requires one negligible component, zero significant components, stable classification, and per-component area convergence within the explicit numerical floor.
 
-### 16.1 Wireframe globe
+Together these prevent both false acceptance of unresolved significant slivers and false sign claims below numerical resolution.
 
-```text
-source records:                   127
-source rings:                     128
-source vertices:                  5015
-normalized boundary coordinates: 11
-camera center:                    15 E, 20 N geodetic
-curve tolerance:                  5000 m
-horizon root tolerance:           0.01 m
+## 13. Pinned Natural Earth proofs
 
-visible source rings:             66
-visible planar fragments:         74
-horizon crossings:                26
-projected vertices:               2764
-maximum subdivision level:        1
-```
-
-### 16.2 Verified filled globe
-
-The filled proof starts from:
+At the primary `15°E, 20°N` geodetic camera, exact pinned Natural Earth `ne_110m_land` produces:
 
 ```text
-curve tolerance:                  5000 m
-horizon arc tolerance:             500 m
-horizon root tolerance:           0.01 m
-relative area stability:          0.5%
-absolute area stability:          1 m^2
-maximum proof rounds:             18
+source records:                    127
+source rings:                      128
+source vertices:                   5015
+visible source rings:               66
+wireframe fragments:                74
+horizon crossings:                  26
+wireframe projected vertices:     2764
+closed verified fill rings:         71
+fill vertices:                    3078
+derived horizon arc segments:      293
+maximum fill refinement rounds:     12
+finest final curve tolerance:        2.44140625 m
+finest final arc tolerance:          0.244140625 m
 ```
 
-The verified whole-world result contains:
+The accepted SVG uses zero `clipPath` elements. Land closes through explicit derived geometry; coastlines remain open at the limb.
+
+### 13.1 Arbitrary-camera numerical regression
+
+The first executable Unfold lifecycle test used a second camera at `45°E, 10°N` and exposed Natural Earth record 111.
+
+Across an extended diagnostic ladder its topology remained fixed at six horizon crossings and three visible rings. Two components converged to approximately:
 
 ```text
-visible fill source rings:        66
-partial fill source rings:         5
-closed fill rings:                71
-fill vertices:                  3078
-derived horizon arc segments:    293
-horizon crossings:                26
-independent coastline parts:      74
-independent coastline vertices: 2859
-maximum refinement rounds used:   12
-finest final curve tolerance:      2.44140625 m
-finest final arc tolerance:        0.244140625 m
+-1.66549e6 m²
+-2.30124e8 m²
 ```
 
-The renderer artifact is produced only after every source ring passes verified fill refinement.
-
-The coastline overlay is recomputed independently with the final curve tolerance selected for each verified source ring. Its horizon-crossing count must equal the fill layer's count before the SVG is accepted.
-
-The resulting SVG has:
+while a third horizon sliver converged around only:
 
 ```text
-clipPath elements:       0
-feature-level land paths: 65
-closed land subpaths:    71
-open coastline paths:    74
+-28 m²
 ```
 
-Every land subpath closes through explicit derived geometry. Coastline paths remain open at the limb and contain no artificial `Z` closure.
+The conservative binary64 screen-area resolution floor for that planet-scale view is about `58 m²`. Earlier refinements therefore legitimately oscillated in sign while the component converged toward numerical zero.
 
-## 17. Resource bounds and failure behavior
+This observation motivated the explicit significant/negligible semantics above. `45°E, 10°N` remains a permanent real-world Viewer CI regression camera.
+
+## 14. Resource bounds and failure behavior
 
 The curve layer exposes:
 
@@ -435,7 +300,7 @@ max_root_iterations
 max_segments
 ```
 
-The fill layer additionally exposes:
+The fill layer adds:
 
 ```text
 horizon_arc_tolerance_m
@@ -451,29 +316,26 @@ absolute_area_stability_tolerance_m2
 max_refinement_rounds
 ```
 
-Non-finite or invalid options fail at the API boundary.
+Invalid options fail at the API boundary. Exceeding resource ceilings, horizon non-convergence, unresolved topology, unstable orientation of significant components, unstable significance classification, or failure of component/aggregate convergence are explicit errors.
 
-Exceeding resource ceilings, horizon non-convergence, unresolved topology, unstable component orientation, or failure to reach the convergence budget are explicit errors. AERIS MUST NOT silently omit difficult geometry, select a different region, or lower quality.
+AERIS MUST NOT silently omit difficult source geometry, choose a different geographic region, or lower quality.
 
-## 18. Relationship to projection topology
+## 15. Relationship to projection seams and Unfold
 
-Projection seams and globe horizons are separate derived topologies.
+Projection seams and globe horizons are separate derived topologies. Both consume the same canonical WGS84 geometry and interior semantics but use independent connector rules.
 
-A map-projection seam is a cut introduced by a planar projection domain. A globe horizon is a visibility boundary introduced by the camera.
+The globe proof does not change any equal-area flat-map invariant.
 
-Both consume the same canonical WGS84 geometry and canonical interior semantics, but their connector rules are independent and live in separate modules.
+The viewer's `Unfold` consumes independently verified globe and planar endpoint scenes. Intermediate frames are explanatory only and are specified separately in [UNFOLD-TRANSITION.md](UNFOLD-TRANSITION.md).
 
-The globe fill proof does not change or weaken any equal-area flat-map invariant.
+## 16. Remaining non-claims
 
-## 19. Remaining non-claims
-
-The current implementation and real-world proof do not establish:
+The current implementation and real-world proofs do not establish:
 
 - formal interval-arithmetic isolation of every possible horizon root;
 - complete semantics for every tangent or exact-horizon source degeneracy;
-- a proof that output-ring count alone captures every possible adversarial topology change between refinement levels;
-- production styling, lighting, terrain, or 3D surface relief;
-- the final animated `Unfold` transition;
-- final UI/toolkit behavior.
+- a formal proof that the current finite topology observables capture every adversarial topology change;
+- production lighting, terrain, 3D surface relief, or final visual styling;
+- final UI/accessibility/localization behavior.
 
-These remain separate contracts. Successful Natural Earth conformance must not be generalized beyond what the implemented checks actually prove.
+Successful Natural Earth conformance must not be generalized beyond what the implemented checks actually prove.
