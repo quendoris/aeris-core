@@ -16,6 +16,7 @@ enum class SourceBridgeError : std::uint8_t {
     invalid_request,
     registry_rejected,
     verified_snapshot_mismatch,
+    noncanonical_geometry,
     resource_size_overflow,
     storage_rejected,
 };
@@ -47,8 +48,9 @@ struct SourceBridgeResult final {
 
 // The bridge deliberately accepts a VerifiedSnapshot and AdapterRegistry rather
 // than a caller-supplied source::Result. Adapter output must therefore pass the
-// ordinary registry validation path before immutable provenance can enter the
-// canonical project database.
+// ordinary registry validation path, describe the exact verified acquisition,
+// and already contain canonical AERIS geographic rings before provenance and
+// feature geometry can enter the canonical project database atomically.
 [[nodiscard]] SourceBridgeResult record_verified_source_snapshot(
     storage::ProjectStore& project,
     const source::AdapterRegistry& registry,
