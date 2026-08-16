@@ -106,34 +106,30 @@ bool test_thin_horizon_sliver_refines() {
 }
 
 bool test_numerically_zero_component_does_not_invent_orientation() {
-    // Identity-camera horizon is longitude +/-90 deg. The upper lobe enters
-    // the visible hemisphere by only 1e-7 rad, while the lower lobe remains
-    // substantial. The tiny derived component is intentionally below the
-    // binary64 screen-area orientation floor and therefore must converge as a
-    // stable negligible component instead of being assigned a fabricated sign.
+    // Identity-camera horizon is longitude +/-90 deg. This entire visible
+    // region enters the front hemisphere by only 1e-7 rad. With a sufficiently
+    // fine finite approximation its screen area is below the binary64
+    // orientation floor. The verifier must classify that fact explicitly
+    // instead of inventing a positive or negative orientation.
     const double just_inside_horizon = aeris::geo::kHalfPi - 1e-7;
     const auto ring = make_ring(
         {
-            {radians(120.0), radians(50.0)},
-            {just_inside_horizon, radians(50.0)},
-            {just_inside_horizon, radians(20.0)},
-            {radians(100.0), radians(20.0)},
-            {radians(100.0), radians(-20.0)},
-            {radians(60.0), radians(-20.0)},
-            {radians(60.0), radians(-50.0)},
-            {radians(120.0), radians(-50.0)},
+            {just_inside_horizon, radians(-1.0)},
+            {radians(100.0), radians(-1.0)},
+            {radians(100.0), radians(1.0)},
+            {just_inside_horizon, radians(1.0)},
         },
         aeris::geometry::RingInteriorSide::left
     );
-    if (ring.vertices.size() != 8U) {
+    if (ring.vertices.size() != 4U) {
         std::cerr << "negligible-component fixture failed to canonicalize\n";
         return false;
     }
 
     auto options = coarse_verified_options();
-    options.initial.curve.geometric_tolerance_m = 100.0;
-    options.initial.horizon_arc_tolerance_m = 10.0;
-    options.max_refinement_rounds = 24U;
+    options.initial.curve.geometric_tolerance_m = 1e-3;
+    options.initial.horizon_arc_tolerance_m = 1e-4;
+    options.max_refinement_rounds = 6U;
 
     const auto result =
         aeris::view::project_visible_wgs84_linear_polygon_ring_verified(
@@ -161,18 +157,19 @@ bool test_numerically_zero_component_does_not_invent_orientation() {
 
     if (!result.topology_stable ||
         !result.component_orientation_stable ||
-        result.polygon.horizon_crossings != 4U ||
-        result.polygon.rings.size() != 2U ||
-        result.significant_component_count != 1U ||
+        result.polygon.horizon_crossings != 2U ||
+        result.polygon.rings.size() != 1U ||
+        result.significant_component_count != 0U ||
         result.negligible_component_count != 1U ||
         !(result.component_area_resolution_floor_m2 > 0.0)) {
         std::cerr
-            << "negligible component was not explicitly classified:"
+            << "numerically zero component was not explicitly classified:"
             << " crossings=" << result.polygon.horizon_crossings
             << " rings=" << result.polygon.rings.size()
             << " significant=" << result.significant_component_count
             << " negligible=" << result.negligible_component_count
             << " floor=" << result.component_area_resolution_floor_m2
+            << " area=" << result.polygon.planar_signed_area_m2
             << '\n';
         return false;
     }
