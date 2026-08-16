@@ -13,6 +13,7 @@ on:
       - 'tests/CMakeLists.txt'
       - 'tests/test_storage.cpp'
       - 'tests/storage_abrupt.cpp'
+      - 'tests/storage_race.cpp'
       - '.github/workflows/storage-ci.yml'
   pull_request:
     paths:
@@ -22,6 +23,7 @@ on:
       - 'tests/CMakeLists.txt'
       - 'tests/test_storage.cpp'
       - 'tests/storage_abrupt.cpp'
+      - 'tests/storage_race.cpp'
       - '.github/workflows/storage-ci.yml'
 
 permissions:
@@ -77,10 +79,10 @@ jobs:
           -DVCPKG_TARGET_TRIPLET=x64-windows
 
       - name: Build storage contract tests
-        run: cmake --build build-storage --target aeris_test_storage aeris_storage_abrupt --config Release --parallel 2
+        run: cmake --build build-storage --target aeris_test_storage aeris_storage_abrupt aeris_storage_race --config Release --parallel 2
 
       - name: Test storage contract
-        run: ctest --test-dir build-storage --build-config Release --output-on-failure -R '^project_storage($|_abrupt_)'
+        run: ctest --test-dir build-storage --build-config Release --output-on-failure -R '^project_storage'
 
   sanitizers:
     name: Linux / storage ASan + UBSan
@@ -105,10 +107,10 @@ jobs:
           -DCMAKE_EXE_LINKER_FLAGS=-fsanitize=address,undefined
 
       - name: Build storage contract tests
-        run: cmake --build build-storage-sanitize --target aeris_test_storage aeris_storage_abrupt --parallel 2
+        run: cmake --build build-storage-sanitize --target aeris_test_storage aeris_storage_abrupt aeris_storage_race --parallel 2
 
       - name: Test storage contract
         env:
           ASAN_OPTIONS: detect_leaks=1
           UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
-        run: ctest --test-dir build-storage-sanitize --output-on-failure -R '^project_storage($|_abrupt_)'
+        run: ctest --test-dir build-storage-sanitize --output-on-failure -R '^project_storage'
