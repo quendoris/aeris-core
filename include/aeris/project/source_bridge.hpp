@@ -31,6 +31,11 @@ struct SourceBridgeResult final {
     source::RegistryError registry_error = source::RegistryError::none;
     source::SourceError source_error = source::SourceError::none;
     storage::StorageError storage_error = storage::StorageError::none;
+
+    // These outcome flags remain meaningful even when ok() is false. A storage
+    // failure can occur after SQLite has durably committed the mutation (for
+    // example while refreshing the caller's ProjectStore metadata), and callers
+    // must not mistake such an error for "nothing reached disk".
     bool inserted = false;
     bool durably_committed = false;
     std::string diagnostic;
