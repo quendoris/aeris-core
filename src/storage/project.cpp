@@ -30,6 +30,27 @@ int two_digits(std::string_view value, const std::size_t offset) noexcept {
     return (a - '0') * 10 + (b - '0');
 }
 
+int four_digits(std::string_view value, const std::size_t offset) noexcept {
+    int result = 0;
+    for (std::size_t i = 0; i < 4U; ++i) {
+        const char c = value[offset + i];
+        if (c < '0' || c > '9') return -1;
+        result = result * 10 + (c - '0');
+    }
+    return result;
+}
+
+bool is_gregorian_leap_year(const int year) noexcept {
+    return (year % 4 == 0) && ((year % 100 != 0) || (year % 400 == 0));
+}
+
+int days_in_gregorian_month(const int year, const int month) noexcept {
+    constexpr std::array<int, 12> days{31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+    if (month < 1 || month > 12) return 0;
+    if (month == 2 && is_gregorian_leap_year(year)) return 29;
+    return days[static_cast<std::size_t>(month - 1)];
+}
+
 std::string generated_uuid_v4() {
     std::array<unsigned char, 16> bytes{};
     sqlite3_randomness(static_cast<int>(bytes.size()), bytes.data());
@@ -216,12 +237,14 @@ bool is_canonical_utc_timestamp(const std::string_view value) noexcept {
     for (const std::size_t i : {0U, 1U, 2U, 3U, 5U, 6U, 8U, 9U, 11U, 12U, 14U, 15U, 17U, 18U}) {
         if (value[i] < '0' || value[i] > '9') return false;
     }
+    const int year = four_digits(value, 0U);
     const int month = two_digits(value, 5U);
     const int day = two_digits(value, 8U);
     const int hour = two_digits(value, 11U);
     const int minute = two_digits(value, 14U);
     const int second = two_digits(value, 17U);
-    return month >= 1 && month <= 12 && day >= 1 && day <= 31 && hour >= 0 && hour <= 23 &&
+    const int month_days = days_in_gregorian_month(year, month);
+    return year >= 0 && month_days != 0 && day >= 1 && day <= month_days && hour >= 0 && hour <= 23 &&
            minute >= 0 && minute <= 59 && second >= 0 && second <= 59;
 }
 

@@ -33,6 +33,13 @@ void expect_error(const aeris::storage::Status& status, const aeris::storage::St
 
 int main() {
     using namespace aeris::storage;
+
+    expect(is_canonical_utc_timestamp("2000-02-29T23:59:59Z"), "Gregorian leap day in year 2000 should be valid");
+    expect(!is_canonical_utc_timestamp("2100-02-29T00:00:00Z"), "Gregorian century year 2100 should not be leap");
+    expect(!is_canonical_utc_timestamp("2026-02-29T00:00:00Z"), "non-leap February 29 should be rejected");
+    expect(!is_canonical_utc_timestamp("2026-04-31T00:00:00Z"), "April 31 should be rejected");
+    expect(!is_canonical_utc_timestamp("2026-13-01T00:00:00Z"), "month 13 should be rejected");
+
     const std::filesystem::path root = std::filesystem::temp_directory_path() / "aeris-storage-v0-contract-test";
     std::error_code ec;
     std::filesystem::remove_all(root, ec);
@@ -144,6 +151,11 @@ int main() {
     invalid_time.timestamp_utc = "2026-08-16 18:10:00";
     auto invalid = ProjectStore::create(root / "bad.aeris", invalid_time);
     expect_error(invalid.status, StorageError::invalid_argument, "non-canonical timestamp should fail at API boundary");
+
+    ProjectCreateOptions invalid_calendar = create_options;
+    invalid_calendar.timestamp_utc = "2026-02-31T18:10:00Z";
+    auto invalid_date = ProjectStore::create(root / "bad-date.aeris", invalid_calendar);
+    expect_error(invalid_date.status, StorageError::invalid_argument, "impossible Gregorian date should fail at API boundary");
 
     const std::filesystem::path wrong_id_path = root / "wrong-id.aeris";
     std::filesystem::copy_file(project_path, wrong_id_path, std::filesystem::copy_options::overwrite_existing, ec);
