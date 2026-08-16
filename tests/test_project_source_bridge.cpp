@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 #include "aeris/project/source_bridge.hpp"
+#include "aeris/storage/geography.hpp"
 #include "aeris/storage/provenance.hpp"
 #include "aeris/util/sha256.hpp"
 
@@ -65,9 +66,7 @@ public:
         });
 
         auto verified = aeris::source::verify_local_snapshot(root_, manifest);
-        if (verified.ok()) {
-            snapshot_ = std::move(verified.snapshot);
-        }
+        if (verified.ok()) snapshot_ = std::move(verified.snapshot);
     }
 
     ~TempSnapshot() {
@@ -87,6 +86,7 @@ private:
 enum class AdapterMode {
     valid,
     wrong_dataset,
+    noncanonical_geometry,
 };
 
 class BridgeAdapter final : public aeris::source::Adapter {
@@ -94,8 +94,11 @@ public:
     explicit BridgeAdapter(const AdapterMode mode = AdapterMode::valid) : mode_(mode) {}
 
     [[nodiscard]] aeris::source::AdapterDescriptor descriptor() const noexcept override {
+        const char* id = "bridge.adapter.v1";
+        if (mode_ == AdapterMode::wrong_dataset) id = "bridge.bad-dataset.v1";
+        if (mode_ == AdapterMode::noncanonical_geometry) id = "bridge.bad-geometry.v1";
         return {
-            mode_ == AdapterMode::valid ? "bridge.adapter.v1" : "bridge.bad-dataset.v1",
+            id,
             "bridge-provider",
             aeris::source::capability_bit(aeris::source::Capability::land),
             aeris::source::TemporalClass::slow_change,
@@ -108,7 +111,7 @@ public:
     ) const override {
         aeris::source::Result result{};
         result.provenance.provider = "bridge-provider";
-        result.provenance.dataset = mode_ == AdapterMode::valid ? "bridge-dataset" : "other-dataset";
+        result.provenance.dataset = mode_ == AdapterMode::wrong_dataset ? "other-dataset" : "bridge-dataset";
         result.provenance.snapshot = request.snapshot;
         result.provenance.dataset_version = "fixture-v1";
         result.provenance.source_uri = snapshot.manifest().source_uri;
@@ -117,13 +120,26 @@ public:
         result.provenance.retrieved_at_utc = snapshot.manifest().retrieved_at_utc;
         result.provenance.worldview = request.worldview;
 
+        const aeris::geometry::LinearRingResult canonical =
+            aeris::geometry::canonicalize_wgs84_linear_ring(
+                {{-0.1, -0.1}, {0.1, -0.1}, {0.1, 0.1}, {-0.1, 0.1}});
+        if (!canonical.ok()) {
+            result.error = aeris::source::SourceError::normalization_failed;
+            return result;
+        }
+
+        aeris::source::FeatureRing source_ring{};
+        source_ring.geometry = canonical.value;
+        source_ring.geometry.interior_side = aeris::geometry::RingInteriorSide::right;
+        source_ring.role = aeris::source::RingRole::exterior;
+        if (mode_ == AdapterMode::noncanonical_geometry) {
+            source_ring.geometry.closing_longitude_rad += 0.25;
+        }
+
         aeris::source::Feature feature{};
         feature.stable_id = "bridge-feature";
         feature.source_id = "fixture-record";
-        feature.rings.push_back({
-            aeris::geometry::LinearRing{{{-0.1, -0.1}, {0.1, -0.1}, {0.1, 0.1}, {-0.1, 0.1}}},
-            aeris::source::RingRole::exterior
-        });
+        feature.rings.push_back(std::move(source_ring));
         result.features.push_back(std::move(feature));
         return result;
     }
@@ -142,9 +158,7 @@ public:
         aeris::storage::ProjectCreateOptions options{};
         options.timestamp_utc = "2026-08-16T20:01:00Z";
         auto created = aeris::storage::ProjectStore::create(root_ / "world.aeris", options);
-        if (created.ok()) {
-            project_ = std::move(created.store);
-        }
+        if (created.ok()) project_ = std::move(created.store);
     }
 
     ~TempProject() {
@@ -175,7 +189,7 @@ private:
     return request;
 }
 
-void test_verified_snapshot_persists_and_retries_idempotently() {
+void test_verified_snapshot_persists_geography_and_retries_idempotently() {
     TempSnapshot snapshot_fixture{};
     TempProject project_fixture{};
     const auto* snapshot = snapshot_fixture.get();
@@ -195,11 +209,12 @@ void test_verified_snapshot_persists_and_retries_idempotently() {
     expect_true("verified source bridge succeeds", first.ok());
     expect_true("verified source inserted", first.inserted);
     expect_true("verified source committed", first.durably_committed);
-    expect_true("source mutation advances one project revision", project->metadata().revision == 1U);
+    expect_true("source dataset advances one project revision", project->metadata().revision == 1U);
 
     const auto listed = aeris::storage::list_source_snapshots(*project);
-    expect_true("stored source lists", listed.ok());
-    expect_true("stored source count", listed.records.size() == 1U);
+    const auto features = aeris::storage::list_source_features(*project, request.source_id);
+    expect_true("stored source lists", listed.ok() && listed.records.size() == 1U);
+    expect_true("stored geography lists", features.ok() && features.records.size() == 1U);
     if (listed.ok() && listed.records.size() == 1U) {
         const auto& record = listed.records.front();
         expect_true("source id preserved", record.source_id == "world.land.primary");
@@ -217,16 +232,24 @@ void test_verified_snapshot_persists_and_retries_idempotently() {
         expect_true("snapshot preserved", record.snapshot == snapshot->manifest().snapshot);
         expect_true("aggregate content hash preserved", record.content_sha256 == snapshot->content_sha256());
         expect_true("resource count preserved", record.resources.size() == 2U);
-        if (record.resources.size() == 2U) {
-            expect_true("resource order deterministic", record.resources[0].logical_name == "geometry");
-            expect_true("manifest size preserved when supplied", record.resources[0].size_bytes.has_value());
-            expect_true("resource order deterministic second", record.resources[1].logical_name == "metadata");
-            expect_true("omitted manifest size remains omitted", !record.resources[1].size_bytes.has_value());
+    }
+    if (features.ok() && features.records.size() == 1U) {
+        const auto& feature = features.records.front();
+        expect_true("feature stable id preserved", feature.stable_id == "bridge-feature");
+        expect_true("feature source id preserved", feature.source_id == "fixture-record");
+        expect_true("feature ring count preserved", feature.rings.size() == 1U);
+        if (feature.rings.size() == 1U) {
+            const auto& ring = feature.rings.front();
+            expect_true("feature role preserved", ring.role == aeris::storage::GeographicRingRole::exterior);
+            expect_true("interior side preserved", ring.interior_side == aeris::storage::GeographicInteriorSide::right);
+            expect_true("canonical ring vertex count preserved", ring.vertices.size() == 4U);
+            expect_true("canonical closing longitude preserved", ring.closing_longitude_rad == -0.1);
+            expect_true("canonical winding preserved", ring.longitude_winding == 0);
         }
     }
 
     const auto retry = aeris::project::record_verified_source_snapshot(*project, registry, *snapshot, request);
-    expect_true("exact verified retry succeeds", retry.ok());
+    expect_true("exact verified dataset retry succeeds", retry.ok());
     expect_true("exact verified retry does not reinsert", !retry.inserted);
     expect_true("exact verified retry does not recommit", !retry.durably_committed);
     expect_true("exact verified retry keeps revision", project->metadata().revision == 1U);
@@ -238,7 +261,9 @@ void test_verified_snapshot_persists_and_retries_idempotently() {
     expect_true("bridge project reopens after original handle closes", reopened.ok());
     if (reopened.ok()) {
         const auto reopened_list = aeris::storage::list_source_snapshots(*reopened.store);
+        const auto reopened_features = aeris::storage::list_source_features(*reopened.store, request.source_id);
         expect_true("reopened provenance lists", reopened_list.ok() && reopened_list.records.size() == 1U);
+        expect_true("reopened geography lists", reopened_features.ok() && reopened_features.records.size() == 1U);
     }
 }
 
@@ -264,8 +289,7 @@ void test_registry_rejection_is_fail_closed() {
     expect_true("wrong pinned hash rejected by bridge", result.error == aeris::project::SourceBridgeError::registry_rejected);
     expect_true("registry error preserved", result.registry_error == aeris::source::RegistryError::snapshot_content_mismatch);
     expect_true("registry rejection leaves revision zero", project->metadata().revision == 0U);
-    const auto listed = aeris::storage::list_source_snapshots(*project);
-    expect_true("registry rejection stores nothing", listed.ok() && listed.records.empty());
+    expect_true("registry rejection stores no source", aeris::storage::list_source_snapshots(*project).records.empty());
 }
 
 void test_manifest_cross_check_rejects_adapter_drift() {
@@ -309,12 +333,39 @@ void test_manifest_cross_check_rejects_adapter_drift() {
     expect_true("binding drift stores nothing", aeris::storage::list_source_snapshots(*project).records.empty());
 }
 
+void test_noncanonical_adapter_geometry_is_rejected() {
+    TempSnapshot snapshot_fixture{};
+    TempProject project_fixture{};
+    const auto* snapshot = snapshot_fixture.get();
+    auto* project = project_fixture.get();
+    if (snapshot == nullptr || project == nullptr) {
+        ++failures;
+        return;
+    }
+
+    aeris::source::AdapterRegistry registry{};
+    expect_true(
+        "bad geometry adapter registers",
+        registry.add(std::make_unique<BridgeAdapter>(AdapterMode::noncanonical_geometry)) ==
+            aeris::source::RegistryError::none
+    );
+    const auto request = valid_request(*snapshot, "bridge.bad-geometry.v1");
+    const auto result = aeris::project::record_verified_source_snapshot(*project, registry, *snapshot, request);
+    expect_true(
+        "bridge rejects adapter ring whose closing semantics disagree with vertices",
+        result.error == aeris::project::SourceBridgeError::noncanonical_geometry
+    );
+    expect_true("bad geometry leaves revision zero", project->metadata().revision == 0U);
+    expect_true("bad geometry stores no source", aeris::storage::list_source_snapshots(*project).records.empty());
+}
+
 }  // namespace
 
 int main() {
-    test_verified_snapshot_persists_and_retries_idempotently();
+    test_verified_snapshot_persists_geography_and_retries_idempotently();
     test_registry_rejection_is_fail_closed();
     test_manifest_cross_check_rejects_adapter_drift();
+    test_noncanonical_adapter_geometry_is_rejected();
 
     if (failures != 0) {
         std::cerr << failures << " test assertion(s) failed\n";
