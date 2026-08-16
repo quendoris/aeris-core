@@ -1,0 +1,112 @@
+# SPDX-FileCopyrightText: 2026 quendoris
+# SPDX-License-Identifier: AGPL-3.0-only
+
+name: Storage CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'CMakeLists.txt'
+      - 'include/aeris/storage/**'
+      - 'src/storage/**'
+      - 'tests/CMakeLists.txt'
+      - 'tests/test_storage.cpp'
+      - '.github/workflows/storage-ci.yml'
+  pull_request:
+    paths:
+      - 'CMakeLists.txt'
+      - 'include/aeris/storage/**'
+      - 'src/storage/**'
+      - 'tests/CMakeLists.txt'
+      - 'tests/test_storage.cpp'
+      - '.github/workflows/storage-ci.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.os }} / SQLite storage
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install SQLite development package (Ubuntu)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
+
+      - name: Install SQLite development package (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install sqlite
+          echo "CMAKE_PREFIX_PATH=$(brew --prefix sqlite)" >> "$GITHUB_ENV"
+
+      - name: Install SQLite development package (Windows)
+        if: runner.os == 'Windows'
+        run: vcpkg install sqlite3:x64-windows
+
+      - name: Configure (Unix)
+        if: runner.os != 'Windows'
+        run: >-
+          cmake -S . -B build-storage
+          -DAERIS_BUILD_STORAGE=ON
+          -DAERIS_BUILD_TESTS=ON
+          -DAERIS_BUILD_TOOLS=OFF
+          -DAERIS_WARNINGS_AS_ERRORS=ON
+          -DCMAKE_BUILD_TYPE=Release
+
+      - name: Configure (Windows)
+        if: runner.os == 'Windows'
+        run: >-
+          cmake -S . -B build-storage
+          -DAERIS_BUILD_STORAGE=ON
+          -DAERIS_BUILD_TESTS=ON
+          -DAERIS_BUILD_TOOLS=OFF
+          -DAERIS_WARNINGS_AS_ERRORS=ON
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake
+          -DVCPKG_TARGET_TRIPLET=x64-windows
+
+      - name: Build storage contract test
+        run: cmake --build build-storage --target aeris_test_storage --config Release --parallel 2
+
+      - name: Test storage contract
+        run: ctest --test-dir build-storage --build-config Release --output-on-failure -R '^project_storage$'
+
+  sanitizers:
+    name: Linux / storage ASan + UBSan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install SQLite development package
+        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
+
+      - name: Configure
+        run: >-
+          cmake -S . -B build-storage-sanitize
+          -DAERIS_BUILD_STORAGE=ON
+          -DAERIS_BUILD_TESTS=ON
+          -DAERIS_BUILD_TOOLS=OFF
+          -DAERIS_WARNINGS_AS_ERRORS=ON
+          -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_CXX_FLAGS=-fsanitize=address,undefined\ -fno-omit-frame-pointer
+          -DCMAKE_EXE_LINKER_FLAGS=-fsanitize=address,undefined
+
+      - name: Build storage contract test
+        run: cmake --build build-storage-sanitize --target aeris_test_storage --parallel 2
+
+      - name: Test storage contract
+        env:
+          ASAN_OPTIONS: detect_leaks=1
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+        run: ctest --test-dir build-storage-sanitize --output-on-failure -R '^project_storage$'
