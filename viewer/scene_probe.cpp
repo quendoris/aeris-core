@@ -2,9 +2,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 #include "scene_builder.hpp"
+#include "unfold.hpp"
 #include "world_loader.hpp"
 
 #include <array>
+#include <cmath>
 #include <cstdlib>
 #include <filesystem>
 #include <iostream>
@@ -27,6 +29,80 @@ namespace {
     }
 
     return scene.max_x > scene.min_x && scene.max_y > scene.min_y;
+}
+
+[[nodiscard]] bool near(const double a, const double b, const double tolerance) {
+    return std::isfinite(a) && std::isfinite(b) && std::abs(a - b) <= tolerance;
+}
+
+[[nodiscard]] bool unfold_has_expected_contract(
+    const aeris::viewer::UnfoldBundle& bundle
+) {
+    if (!bundle.ok || bundle.canceled ||
+        bundle.target_mode != aeris::viewer::ViewMode::mollweide ||
+        !scene_has_expected_geometry(bundle.globe_endpoint) ||
+        !scene_has_expected_geometry(bundle.flat_endpoint) ||
+        bundle.guides.size() != 24U) {
+        return false;
+    }
+
+    const aeris::viewer::UnfoldGuideLine* seam_left = nullptr;
+    const aeris::viewer::UnfoldGuideLine* seam_right = nullptr;
+    std::size_t seam_count = 0U;
+    for (const auto& line : bundle.guides) {
+        if (line.vertices.size() < 2U) {
+            return false;
+        }
+        if (line.kind == aeris::viewer::UnfoldGuideKind::seam) {
+            if (seam_count == 0U) {
+                seam_left = &line;
+            } else if (seam_count == 1U) {
+                seam_right = &line;
+            }
+            ++seam_count;
+        }
+    }
+    if (seam_count != 2U || seam_left == nullptr || seam_right == nullptr ||
+        seam_left->vertices.size() != seam_right->vertices.size()) {
+        return false;
+    }
+
+    // The two sides of the projection seam are one geographic meridian on the
+    // sphere, but become opposite planar boundaries away from the poles.
+    constexpr double globe_tolerance_m = 1e-6;
+    for (std::size_t index = 0U; index < seam_left->vertices.size(); ++index) {
+        const auto& left = seam_left->vertices[index];
+        const auto& right = seam_right->vertices[index];
+        if (!near(left.globe.x, right.globe.x, globe_tolerance_m) ||
+            !near(left.globe.y, right.globe.y, globe_tolerance_m)) {
+            return false;
+        }
+    }
+
+    const std::size_t mid = seam_left->vertices.size() / 2U;
+    if (!(seam_left->vertices[mid].flat.x < 0.0 &&
+          seam_right->vertices[mid].flat.x > 0.0)) {
+        return false;
+    }
+
+    const auto& sample = bundle.guides.front().vertices[bundle.guides.front().vertices.size() / 3U];
+    const auto at_start = aeris::viewer::interpolate_unfold_vertex(sample, 0.0);
+    const auto at_end = aeris::viewer::interpolate_unfold_vertex(sample, 1.0);
+    if (!near(at_start.x, sample.globe.x, 0.0) ||
+        !near(at_start.y, sample.globe.y, 0.0) ||
+        !near(at_end.x, sample.flat.x, 0.0) ||
+        !near(at_end.y, sample.flat.y, 0.0)) {
+        return false;
+    }
+
+    if (aeris::viewer::unfold_eased_progress(-1.0) != 0.0 ||
+        aeris::viewer::unfold_eased_progress(0.0) != 0.0 ||
+        aeris::viewer::unfold_eased_progress(1.0) != 1.0 ||
+        aeris::viewer::unfold_eased_progress(2.0) != 1.0) {
+        return false;
+    }
+
+    return true;
 }
 
 }  // namespace
@@ -90,6 +166,23 @@ int main(int argc, char** argv) {
             << " max_refinement=" << scene.max_refinement_rounds
             << '\n';
     }
+
+    const auto unfold = aeris::viewer::build_unfold_bundle(
+        *loaded.world,
+        15.0,
+        20.0,
+        aeris::viewer::ViewMode::mollweide
+    );
+    if (!unfold_has_expected_contract(unfold)) {
+        std::cerr << "unfold contract probe failed: ok=" << unfold.ok
+                  << " canceled=" << unfold.canceled
+                  << " diagnostic=" << unfold.diagnostic
+                  << " guides=" << unfold.guides.size() << '\n';
+        return EXIT_FAILURE;
+    }
+    std::cout << "Unfold: guides=" << unfold.guides.size()
+              << " globe_vertices=" << unfold.globe_endpoint.vertices
+              << " flat_vertices=" << unfold.flat_endpoint.vertices << '\n';
 
     std::cout << "viewer_scene_probe: PASS\n";
     return EXIT_SUCCESS;
