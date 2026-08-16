@@ -125,7 +125,6 @@ namespace {
 
 double unfold_eased_progress(const double progress) noexcept {
     const double p = std::clamp(progress, 0.0, 1.0);
-    // Quintic smoothstep: exact endpoints with zero first and second derivative.
     return p * p * p * (p * (p * 6.0 - 15.0) + 10.0);
 }
 
@@ -183,7 +182,8 @@ UnfoldBundle build_unfold_bundle(
     if (!bundle.globe_endpoint.ok ||
         bundle.globe_endpoint.quality != SceneQuality::verified) {
         bundle.ok = false;
-        bundle.diagnostic = "unable to build verified globe endpoint";
+        bundle.diagnostic = "unable to build verified globe endpoint: " +
+            bundle.globe_endpoint.diagnostic;
         return bundle;
     }
 
@@ -200,7 +200,8 @@ UnfoldBundle build_unfold_bundle(
     if (!bundle.flat_endpoint.ok ||
         bundle.flat_endpoint.quality != SceneQuality::verified) {
         bundle.ok = false;
-        bundle.diagnostic = "unable to build verified planar endpoint";
+        bundle.diagnostic = "unable to build verified planar endpoint: " +
+            bundle.flat_endpoint.diagnostic;
         return bundle;
     }
 
@@ -218,7 +219,6 @@ UnfoldBundle build_unfold_bundle(
 
     bundle.guides.reserve(24U);
 
-    // Ordinary graticule meridians deliberately exclude the projection seam.
     for (int longitude_deg = -150; longitude_deg <= 150; longitude_deg += 30) {
         if (!append_meridian(
                 bundle.guides,
@@ -256,9 +256,6 @@ UnfoldBundle build_unfold_bundle(
         }
     }
 
-    // The two seam sides are geographically coincident on the sphere but are
-    // kept as separate guide lines. Their planar endpoints split to the left
-    // and right projection boundaries, making the cut explicit during unfold.
     if (!append_meridian(
             bundle.guides,
             -180.0,
