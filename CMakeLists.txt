@@ -9,7 +9,7 @@ option(AERIS_BUILD_TOOLS "Build AERIS development tools" ON)
 # Storage remains an opt-in native layer: SQLite is private to AERIS::storage,
 # and even project provenance uses storage-native DTOs rather than core/source types.
 option(AERIS_BUILD_STORAGE "Build SQLite-backed AERIS project/session storage" OFF)
-# Project orchestration is a separate composition layer over core/source + storage.
+# Project orchestration is the explicit verified composition layer over core/source + storage.
 # Enabling it must never make SQLite a dependency of AERIS::core itself.
 option(AERIS_BUILD_PROJECT "Build AERIS project orchestration over core and storage" OFF)
 # Keep the GUI opt-in so the reference core never acquires a transitive Qt
