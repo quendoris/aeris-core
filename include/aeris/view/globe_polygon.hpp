@@ -108,6 +108,14 @@ struct VerifiedGlobePolygonResult final {
     double estimated_planar_area_error_m2 = 0.0;
     double allowed_planar_area_delta_m2 = 0.0;
 
+    // A derived visible component whose absolute screen area is at or below
+    // this binary64 resolution floor has no numerically meaningful orientation.
+    // Such a component remains represented by the finite projector, but the
+    // verifier classifies it as negligible instead of inventing a stable sign.
+    double component_area_resolution_floor_m2 = 0.0;
+    std::size_t significant_component_count = 0U;
+    std::size_t negligible_component_count = 0U;
+
     unsigned refinement_rounds = 0U;
     double final_curve_geometric_tolerance_m = 0.0;
     double final_horizon_arc_tolerance_m = 0.0;
@@ -125,10 +133,13 @@ struct VerifiedGlobePolygonResult final {
 // Verified high-level fill projection. The finite polygon projector remains a
 // deterministic one-shot primitive; this wrapper repeatedly refines it until:
 //
-// 1. every partial-horizon output component has the orientation required by
-//    RingInteriorSide;
-// 2. horizon-crossing and output-component counts are stable across two
-//    consecutive acceptable refinements; and
+// 1. every numerically significant partial-horizon component has the
+//    orientation required by RingInteriorSide; components below the explicit
+//    binary64 screen-area resolution floor are classified as negligible rather
+//    than assigned an unreliable sign;
+// 2. horizon-crossing count, output-component count, and per-component
+//    significant/negligible classification are stable across two consecutive
+//    acceptable refinements; and
 // 3. signed orthographic planar area converges within the declared stability
 //    budget.
 //
