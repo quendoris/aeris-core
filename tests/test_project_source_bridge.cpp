@@ -154,7 +154,7 @@ public:
     }
 
     [[nodiscard]] aeris::storage::ProjectStore* get() noexcept { return project_.get(); }
-    [[nodiscard]] const std::filesystem::path& root() const noexcept { return root_; }
+    void close() noexcept { project_.reset(); }
 
 private:
     std::filesystem::path root_;
@@ -232,9 +232,10 @@ void test_verified_snapshot_persists_and_retries_idempotently() {
     expect_true("exact verified retry keeps revision", project->metadata().revision == 1U);
 
     const auto project_path = project->path();
+    project_fixture.close();
     project = nullptr;
     auto reopened = aeris::storage::ProjectStore::open(project_path);
-    expect_true("bridge project reopens", reopened.ok());
+    expect_true("bridge project reopens after original handle closes", reopened.ok());
     if (reopened.ok()) {
         const auto reopened_list = aeris::storage::list_source_snapshots(*reopened.store);
         expect_true("reopened provenance lists", reopened_list.ok() && reopened_list.records.size() == 1U);
