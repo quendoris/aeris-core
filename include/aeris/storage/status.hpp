@@ -20,6 +20,7 @@ enum class StorageError {
     invalid_project_uuid,
     session_project_mismatch,
     integrity_failed,
+    record_exists,
 };
 
 struct Status {

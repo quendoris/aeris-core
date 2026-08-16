@@ -44,6 +44,7 @@ aeris_add_core_test(aeris_test_globe_polygon_verified test_globe_polygon_verifie
 
 if(TARGET aeris_storage)
     aeris_add_storage_test(aeris_test_storage test_storage.cpp project_storage)
+    aeris_add_storage_test(aeris_test_provenance test_provenance.cpp project_storage_provenance)
 
     add_executable(aeris_storage_abrupt storage_abrupt.cpp)
     target_link_libraries(aeris_storage_abrupt PRIVATE AERIS::storage)
@@ -64,6 +65,13 @@ if(TARGET aeris_storage)
     set_target_properties(aeris_storage_race PROPERTIES CXX_EXTENSIONS OFF)
     aeris_enable_warnings(aeris_storage_race)
     add_test(NAME project_storage_race COMMAND aeris_storage_race)
+
+    add_executable(aeris_provenance_race provenance_race.cpp)
+    target_link_libraries(aeris_provenance_race PRIVATE AERIS::storage Threads::Threads)
+    target_compile_features(aeris_provenance_race PRIVATE cxx_std_17)
+    set_target_properties(aeris_provenance_race PROPERTIES CXX_EXTENSIONS OFF)
+    aeris_enable_warnings(aeris_provenance_race)
+    add_test(NAME project_storage_provenance_race COMMAND aeris_provenance_race)
 endif()
 
 if(TARGET aeris_diagnostic_svg)
