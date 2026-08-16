@@ -78,6 +78,7 @@ if(AERIS_BUILD_STORAGE)
         src/storage/project.cpp
         src/storage/session.cpp
         src/storage/provenance.cpp
+        src/storage/geography_codec.cpp
     )
     add_library(AERIS::storage ALIAS aeris_storage)
     target_include_directories(aeris_storage
