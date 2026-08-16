@@ -67,8 +67,6 @@ namespace {
         return false;
     }
 
-    // The two sides of the projection seam are one geographic meridian on the
-    // sphere, but become opposite planar boundaries away from the poles.
     constexpr double globe_tolerance_m = 1e-6;
     for (std::size_t index = 0U; index < seam_left->vertices.size(); ++index) {
         const auto& left = seam_left->vertices[index];
@@ -103,6 +101,24 @@ namespace {
     }
 
     return true;
+}
+
+void print_scene_failure(
+    const char* label,
+    const aeris::viewer::SceneData& scene
+) {
+    std::cerr
+        << "scene probe failed for " << label
+        << ": ok=" << scene.ok
+        << " diagnostic=" << scene.diagnostic
+        << " camera=" << scene.camera_longitude_deg << ','
+        << scene.camera_latitude_deg
+        << " features=" << scene.features.size()
+        << " fill_rings=" << scene.fill_rings
+        << " outlines=" << scene.outline_parts
+        << " vertices=" << scene.vertices
+        << " max_refinement=" << scene.max_refinement_rounds
+        << '\n';
 }
 
 }  // namespace
@@ -143,17 +159,7 @@ int main(int argc, char** argv) {
         const aeris::viewer::SceneData scene =
             aeris::viewer::build_scene(*loaded.world, request);
         if (!scene_has_expected_geometry(scene)) {
-            std::cerr
-                << "scene probe failed for "
-                << aeris::viewer::view_mode_name(mode)
-                << ": ok=" << scene.ok
-                << " diagnostic=" << scene.diagnostic
-                << " features=" << scene.features.size()
-                << " fill_rings=" << scene.fill_rings
-                << " outlines=" << scene.outline_parts
-                << " vertices=" << scene.vertices
-                << " max_refinement=" << scene.max_refinement_rounds
-                << '\n';
+            print_scene_failure(aeris::viewer::view_mode_name(mode), scene);
             return EXIT_FAILURE;
         }
 
@@ -166,6 +172,28 @@ int main(int argc, char** argv) {
             << " max_refinement=" << scene.max_refinement_rounds
             << '\n';
     }
+
+    // This camera was discovered by the Unfold stale-generation lifecycle
+    // probe. It is retained as a permanent arbitrary-camera verification case:
+    // a user may rotate the globe here, so verified fill must not depend on a
+    // privileged camera orientation.
+    aeris::viewer::SceneRequest camera_regression{};
+    camera_regression.mode = aeris::viewer::ViewMode::globe;
+    camera_regression.quality = aeris::viewer::SceneQuality::verified;
+    camera_regression.camera_longitude_deg = 45.0;
+    camera_regression.camera_latitude_deg = 10.0;
+    const aeris::viewer::SceneData camera_scene =
+        aeris::viewer::build_scene(*loaded.world, camera_regression);
+    if (!scene_has_expected_geometry(camera_scene)) {
+        print_scene_failure("Globe camera regression 45E/10N", camera_scene);
+        return EXIT_FAILURE;
+    }
+    std::cout << "Globe camera regression 45E/10N: PASS"
+              << " fill_rings=" << camera_scene.fill_rings
+              << " outlines=" << camera_scene.outline_parts
+              << " vertices=" << camera_scene.vertices
+              << " max_refinement=" << camera_scene.max_refinement_rounds
+              << '\n';
 
     const auto unfold = aeris::viewer::build_unfold_bundle(
         *loaded.world,
