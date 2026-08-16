@@ -285,8 +285,11 @@ SourceSnapshotMutationResult store_source_snapshot(
         return {std::move(status), false, false};
     }
     if (existing) {
+        const bool identical = equal_record(*existing, record);
         detail::rollback(db.get());
-        if (equal_record(*existing, record)) return {Status::success(), false, false};
+        status = project.refresh_metadata();
+        if (!status) return {std::move(status), false, false};
+        if (identical) return {Status::success(), false, false};
         return {{StorageError::record_exists, "source ID already exists with different immutable provenance"}, false, false};
     }
 
