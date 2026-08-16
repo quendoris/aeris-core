@@ -151,18 +151,39 @@ namespace {
     });
     controller.set_bundle_callback([&](aeris::viewer::UnfoldBundle bundle) {
         ++bundle_callbacks;
-        if (bundle.ok && !bundle.canceled &&
+        const bool expected =
+            bundle.ok && !bundle.canceled &&
             bundle.target_mode == aeris::viewer::ViewMode::sinusoidal &&
             bundle.guides.size() == 24U &&
             bundle.globe_endpoint.quality == aeris::viewer::SceneQuality::verified &&
             bundle.flat_endpoint.quality == aeris::viewer::SceneQuality::verified &&
             near(bundle.globe_endpoint.camera_longitude_deg, 45.0) &&
-            near(bundle.globe_endpoint.camera_latitude_deg, 10.0)) {
+            near(bundle.globe_endpoint.camera_latitude_deg, 10.0);
+
+        if (expected) {
             final_bundle_seen = true;
             wait_for_final.quit();
-        } else {
-            stale_bundle_delivered = true;
+            return;
         }
+
+        stale_bundle_delivered = true;
+        std::cerr
+            << "unexpected unfold bundle:"
+            << " ok=" << bundle.ok
+            << " canceled=" << bundle.canceled
+            << " target=" << static_cast<unsigned>(bundle.target_mode)
+            << " guides=" << bundle.guides.size()
+            << " globe_quality=" << static_cast<unsigned>(bundle.globe_endpoint.quality)
+            << " flat_quality=" << static_cast<unsigned>(bundle.flat_endpoint.quality)
+            << " globe_ok=" << bundle.globe_endpoint.ok
+            << " flat_ok=" << bundle.flat_endpoint.ok
+            << " globe_camera=" << bundle.globe_endpoint.camera_longitude_deg
+            << ',' << bundle.globe_endpoint.camera_latitude_deg
+            << " flat_camera=" << bundle.flat_endpoint.camera_longitude_deg
+            << ',' << bundle.flat_endpoint.camera_latitude_deg
+            << " diagnostic=" << bundle.diagnostic
+            << '\n';
+        wait_for_final.quit();
     });
     QObject::connect(&timeout, &QTimer::timeout, [&]() {
         timed_out = true;
