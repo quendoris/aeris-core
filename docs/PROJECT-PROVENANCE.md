@@ -3,23 +3,26 @@
 **Status:** DRAFT IMPLEMENTATION CONTRACT  
 **Implemented project draft:** schema generation 2 / format 0.2
 
-This document defines the first durable source-provenance layer inside `.aeris`. It builds on `STORAGE-FOUNDATION.md` and remains pre-1.0: development files have no long-term compatibility promise yet.
+This document defines the durable source-provenance layer inside `.aeris` and the implemented orchestration boundary that is allowed to move already verified source identity into it. It builds on `STORAGE-FOUNDATION.md` and remains pre-1.0: development files have no long-term compatibility promise yet.
 
 ## 1. Dependency direction
 
-The persistence layer deliberately does not know the cartographic source model.
+Persistence and cartographic source decoding remain separate layers.
 
 ```text
 AERIS::core
-  source adapters / VerifiedSnapshot / normalized features
+  acquisition / VerifiedSnapshot / adapters / registry
              ↓
-       future AERIS::project bridge
+       AERIS::project
+  verified-source orchestration
              ↓
 AERIS::storage
   neutral provenance records / SQLite
 ```
 
 `AERIS::storage` does not include `source::Result`, `VerifiedSnapshot`, Natural Earth types, or source capability enums. The storage DTO uses neutral fixed-width numeric capability/temporal values plus exact strings.
+
+`AERIS::project` is the explicit composition layer that may depend on both `AERIS::core` and `AERIS::storage`. `AERIS_BUILD_PROJECT=ON` requires `AERIS_BUILD_STORAGE=ON`; Project CI contains a negative configure test for that rule.
 
 This prevents SQLite schema details from becoming part of adapter contracts and prevents source adapters from acquiring a persistence dependency.
 
@@ -86,15 +89,9 @@ The primary key is `(source_id, logical_name)`. The source foreign key uses `ON 
 
 This table records **input content identity**, not yet general project resource storage.
 
-In particular, generation 2 does not yet store:
+Generation 2 does not store cache-local absolute paths, opaque downloader state, embedded payloads, media-type policy, or frozen/portable storage mode. A verified acquisition-relative path is also not copied into the project as a machine-local locator.
 
-- cache-local absolute paths;
-- opaque downloader state;
-- embedded payloads;
-- media-type policy;
-- frozen/portable storage mode.
-
-Those belong to the later general `aeris_resource` contract. A verified acquisition-relative path is also not treated as a canonical machine-independent locator merely because it existed in one downloaded snapshot directory.
+The aggregate snapshot hash produced by source verification already commits to the normalized portable relative path together with logical name, resource hash, and verified byte size. The project therefore preserves the verified aggregate identity without turning one cache layout into a canonical project path field.
 
 ## 5. Atomic source mutation
 
@@ -107,9 +104,7 @@ aeris_source row
 + project modified_utc update
 ```
 
-A failure before commit leaves none of those semantic changes acknowledged.
-
-The open `ProjectStore` refreshes its metadata after a successful provenance commit.
+A failure before commit leaves none of those semantic changes acknowledged. The open `ProjectStore` refreshes its metadata after a successful provenance commit.
 
 ## 6. Idempotent retry
 
@@ -149,17 +144,9 @@ The same canonical constraints are checked again when rows are read from an exis
 
 Listing project source snapshots opens a separate SQLite read-only connection.
 
-Before returning data, AERIS rechecks:
+Before returning data, AERIS rechecks SQLite `quick_check`, project application identity, exact supported schema generation, equality with the UUID of the validated `ProjectStore`, and stored row types/ranges/canonical hashes and timestamps.
 
-- SQLite `quick_check`;
-- project application identifier;
-- exact supported project schema generation;
-- equality with the UUID of the validated `ProjectStore` handle;
-- stored row types, numeric bounds, canonical hashes/timestamps and resource limits.
-
-Sources enumerate by `source_id`; resources enumerate by `logical_name`.
-
-The conformance test compares project bytes before and after enumeration to ensure the read path does not implicitly reconfigure or rewrite the database.
+Sources enumerate by `source_id`; resources enumerate by `logical_name`. The conformance test compares project bytes before and after enumeration to ensure the read path does not implicitly reconfigure or rewrite the database.
 
 ## 9. Project open-time integrity
 
@@ -177,40 +164,49 @@ This prevents two independently opened project handles from both deriving `revis
 
 The provenance conformance suite similarly exercises concurrent identical snapshot insertion through two independent project handles. Exactly one transaction inserts; the other becomes an idempotent reader of the committed immutable record.
 
-## 11. Current non-claims
+## 11. Verified-source project bridge
 
-Schema generation 2 does not yet prove or implement:
-
-- persistence of canonical feature geometry;
-- layer ordering and layer configuration;
-- styles or extension payloads;
-- general embedded/external `aeris_resource` storage;
-- frozen/portable projects;
-- source removal/replacement UX;
-- stable migration from draft 0.1;
-- a direct adapter-to-storage API;
-- viewer source-management UX.
-
-Most importantly, storage accepting a neutral `SourceSnapshotRecord` does not by itself prove that the record came from a verified adapter. Product code must not construct these records directly from UI text.
-
-## 12. Next boundary
-
-The next layer is an orchestration target that depends on both source and storage without reversing either dependency:
+Product code does not need to construct a neutral `SourceSnapshotRecord` from UI text. The implemented project bridge accepts:
 
 ```text
-SourceBinding
-+ VerifiedSnapshot
+validated ProjectStore
 + AdapterRegistry
-        ↓
-registry load / validation
-        ↓
-validated Result + exact manifest
-        ↓
-neutral SourceSnapshotRecord
-        ↓
-atomic storage mutation
++ SourceBinding
++ VerifiedSnapshot
++ project-local source_id
++ canonical mutation timestamp
 ```
 
-That bridge must recheck that adapter identity, requested capability, snapshot identity, provider, aggregate content hash, retrieval metadata and individual manifest resources agree before persistence is attempted.
+It deliberately does **not** accept an arbitrary caller-supplied `source::Result`.
 
-Canonical feature geometry persistence is a later transaction boundary; provenance success alone must not be misrepresented as “the source geometry is now stored in the project.”
+The bridge invokes `AdapterRegistry::load` itself, so ordinary adapter/request/capability/provenance validation and the verified aggregate content-hash check run before persistence is considered.
+
+After registry success, the bridge additionally requires adapter provenance to describe the exact acquisition manifest. The provider, dataset, snapshot label, source URI, retrieval timestamp, and aggregate content SHA-256 must agree, and the binding snapshot label must equal the verified manifest snapshot.
+
+This extra check is intentional: an adapter result may be internally valid according to the general registry contract while still describing a different acquisition identity than the verified bytes presented to the bridge.
+
+The bridge maps only the selected binding capability bit, adapter temporal class, exact provenance, and verified resource-manifest identity into neutral storage values. It preserves storage's atomic and idempotent mutation semantics.
+
+## 12. Executed bridge proof
+
+Dedicated Project CI builds and tests the composition layer on Ubuntu, Windows, and macOS plus Linux ASan+UBSan.
+
+The current contract tests prove:
+
+- verified local bytes pass acquisition verification before the bridge can receive a `VerifiedSnapshot`;
+- the registry is invoked by the bridge rather than bypassed;
+- exact source/resource identity reaches `.aeris`;
+- an exact retry does not create a second project revision;
+- after the original `ProjectStore` is destroyed, reopening the project still exposes the committed provenance;
+- a wrong pinned aggregate content hash fails closed before storage mutation;
+- adapter dataset drift that survives ordinary registry validation is rejected by the bridge's acquisition-manifest cross-check;
+- a binding snapshot label that disagrees with the verified manifest is rejected;
+- configuring the project layer with storage disabled is rejected explicitly.
+
+## 13. Current non-claims and next boundary
+
+Schema generation 2 and the project bridge do not yet prove or implement canonical feature geometry persistence, layer ordering/configuration, styles, extension payloads, general embedded/external `aeris_resource` storage, frozen/portable projects, source removal/replacement semantics, or viewer source-management UX.
+
+Most importantly, a successful provenance bridge operation means **the verified source identity is durably recorded**. It does not mean the adapter's feature geometry has been persisted.
+
+The next persistence boundary should therefore be canonical geographic feature/ring storage tied to an immutable source record. Derived planar projection geometry and globe-view tessellation remain caches/results, not geographic truth.

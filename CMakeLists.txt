@@ -9,6 +9,10 @@ option(AERIS_BUILD_TOOLS "Build AERIS development tools" ON)
 # Storage remains an opt-in native layer: SQLite is private to AERIS::storage,
 # and even project provenance uses storage-native DTOs rather than core/source types.
 option(AERIS_BUILD_STORAGE "Build SQLite-backed AERIS project/session storage" OFF)
+# Project orchestration is the explicit verified composition layer over core/source + storage.
+# Enabling it must never make SQLite a dependency of AERIS::core itself; configure and
+# Project CI both enforce that storage is explicitly enabled for this composition layer.
+option(AERIS_BUILD_PROJECT "Build AERIS project orchestration over core and storage" OFF)
 # Keep the GUI opt-in so the reference core never acquires a transitive Qt
 # requirement merely because a frontend exists in the same repository.
 option(AERIS_BUILD_VIEWER "Build the optional Qt Widgets AERIS viewer" OFF)
@@ -84,6 +88,22 @@ if(AERIS_BUILD_STORAGE)
     set_target_properties(aeris_storage PROPERTIES CXX_EXTENSIONS OFF POSITION_INDEPENDENT_CODE ON)
     target_link_libraries(aeris_storage PRIVATE ${AERIS_SQLITE_TARGET})
     aeris_enable_warnings(aeris_storage)
+endif()
+
+if(AERIS_BUILD_PROJECT)
+    if(NOT AERIS_BUILD_STORAGE)
+        message(FATAL_ERROR "AERIS_BUILD_PROJECT requires AERIS_BUILD_STORAGE=ON")
+    endif()
+
+    add_library(aeris_project STATIC
+        src/project/source_bridge.cpp
+    )
+    add_library(AERIS::project ALIAS aeris_project)
+    target_include_directories(aeris_project PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include> $<INSTALL_INTERFACE:include>)
+    target_compile_features(aeris_project PUBLIC cxx_std_17)
+    set_target_properties(aeris_project PROPERTIES CXX_EXTENSIONS OFF POSITION_INDEPENDENT_CODE ON)
+    target_link_libraries(aeris_project PUBLIC AERIS::core AERIS::storage)
+    aeris_enable_warnings(aeris_project)
 endif()
 
 if(AERIS_BUILD_TOOLS)
