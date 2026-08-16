@@ -3,7 +3,7 @@
 **Status:** DRAFT IMPLEMENTATION CHECKPOINT  
 **Project format:** pre-1.0, no long-term compatibility promise yet
 
-This document records the first implemented persistence foundation beneath the broader `AERIS-PROJECT-FORMAT.md` design. It describes what the current code proves and, equally importantly, what it does not yet prove.
+This document records the implemented persistence foundation beneath the broader `AERIS-PROJECT-FORMAT.md` design. It describes what the storage substrate proves and, equally importantly, what it does not yet prove. Source-provenance persistence built on this substrate is specified separately in `PROJECT-PROVENANCE.md`.
 
 ## 1. Layer boundary
 
@@ -21,9 +21,11 @@ AERIS::core
 
 has no transitive SQLite dependency. Qt is not involved in project-format semantics. A headless mathematical build can therefore remain free of both SQLite and the GUI toolkit.
 
+The storage target remains source-agnostic even after provenance persistence was added: it accepts neutral persistence records rather than `source::Result` or provider-specific objects.
+
 ## 2. Implemented draft containers
 
-The first vertical slice implements:
+The storage foundation implements:
 
 ```text
 world.aeris
@@ -32,7 +34,7 @@ world.aeris.session
 
 Both are SQLite 3 databases, but they have separate provisional application identifiers and separate schemas.
 
-The canonical project currently stores only its foundation metadata:
+The canonical project foundation stores:
 
 - project UUID;
 - draft format major/minor;
@@ -43,13 +45,15 @@ The canonical project currently stores only its foundation metadata:
 - worldview identifier;
 - frozen marker.
 
-The sidecar currently stores:
+Draft format 0.2 additionally implements immutable source provenance and verified input-manifest identity through `aeris_source` and `aeris_source_resource`; see `PROJECT-PROVENANCE.md`. Canonical feature/layer/style data and general embedded/external resource storage remain later layers.
+
+The sidecar stores:
 
 - the canonical project UUID it belongs to;
 - its own revision and modification timestamp;
 - optional view mode, camera longitude/latitude, and zoom.
 
-The wider source/resource/feature/layer/style/extension schema remains a later layer. This checkpoint must not be mistaken for the stable AERIS Project Format 1.0 schema.
+This checkpoint must not be mistaken for the stable AERIS Project Format 1.0 schema.
 
 ## 3. File acceptance precedes writable configuration
 
@@ -60,10 +64,11 @@ AERIS opens the candidate and verifies, before applying writable durability conf
 1. SQLite `quick_check`;
 2. expected application identifier;
 3. supported draft schema generation;
-4. required singleton metadata and SQLite column types;
+4. required schema surface, singleton metadata and SQLite column types;
 5. canonical UUID and metadata bounds;
 6. canonical Gregorian UTC timestamps;
-7. for a session sidecar, exact equality with the UUID of the already validated `ProjectStore`.
+7. project foreign-key integrity where the project schema uses foreign keys;
+8. for a session sidecar, exact equality with the UUID of the already validated `ProjectStore`.
 
 A project database presented to the session reader, or a session database presented to the project reader, is rejected before AERIS changes its journal configuration.
 
@@ -82,6 +87,8 @@ temp_store = MEMORY
 
 An acknowledged project or session mutation executes inside a short `BEGIN IMMEDIATE` transaction. The in-memory revision/state is advanced only after SQLite reports a successful commit.
 
+Project mutations re-read the current metadata under the acquired write transaction rather than deriving a new revision from a potentially stale in-memory cache. This preserves monotonic revision semantics across independently opened project handles.
+
 There is no periodic autosave window in this contract.
 
 ## 5. No-overwrite project publication
@@ -92,7 +99,7 @@ Instead, AERIS:
 
 1. creates a uniquely named sibling staging directory;
 2. builds the complete SQLite project in that directory;
-3. commits it and runs `quick_check`;
+3. commits it and runs integrity checks;
 4. closes the staged database;
 5. publishes it to the requested final pathname through a no-overwrite hard-link operation;
 6. opens and validates the published pathname through the ordinary project reader;
@@ -114,10 +121,10 @@ Deleting `.aeris.session` remains semantically harmless to `.aeris`.
 
 The dedicated Storage CI exercises the storage target independently on Ubuntu, Windows, and macOS, plus a Linux ASan+UBSan job.
 
-The implemented tests cover:
+The foundation tests cover:
 
 - create, mutation, close, and reopen;
-- revision persistence;
+- revision persistence and multi-handle revision serialization;
 - application-ID rejection;
 - impossible Gregorian date rejection, including leap-year boundary cases;
 - adjacent session creation without invented view state;
@@ -129,6 +136,8 @@ The implemented tests cover:
 - simultaneous publication attempts for one project pathname;
 - simultaneous publication attempts for one session pathname.
 
+The provenance extension adds tests for atomic source/manifest insertion, idempotent retry, immutable-ID conflicts, read-only enumeration, deterministic ordering and concurrent identical insertion from independent project handles.
+
 The abrupt-exit test deliberately calls `std::_Exit(0)` after the commits. The verification process then reopens both files and requires the acknowledged revisions/state. This proves that the current contract does not depend on C++ destructors or `sqlite3_close()` during graceful shutdown.
 
 ## 8. Explicit non-claims
@@ -139,7 +148,8 @@ This checkpoint does **not** yet prove:
 - parent-directory durability across every filesystem/storage-stack combination;
 - correctness on filesystems that do not support the current hard-link publication primitive;
 - stable pre-1.0 backward compatibility;
-- full source/resource/feature/layer/style persistence;
+- canonical feature/layer/style persistence;
+- general embedded/external project resource storage;
 - frozen/portable resource embedding;
 - migration behavior between stable format generations;
 - read-only project operation;
@@ -149,16 +159,18 @@ This checkpoint does **not** yet prove:
 
 Those are separate contracts and must be tested before the corresponding capability is claimed.
 
-## 9. Next storage layer
+## 9. Next storage layers
 
-Once this foundation is merged, the next persistence work should build on it rather than widen this PR indefinitely:
+With provenance identity implemented in draft 0.2, the next persistence work should build outward without reversing dependency direction:
 
 ```text
-verified source snapshot/provenance
+verified source pipeline
         ↓
-aeris_source + aeris_resource
+project/source-to-storage orchestration bridge
         ↓
-canonical feature/layer data
+canonical feature + layer persistence
+        ↓
+general resources / frozen portability
         ↓
 style / extension / export-profile state
         ↓
