@@ -40,27 +40,6 @@ namespace {
            provenance.content_sha256 == snapshot.content_sha256();
 }
 
-[[nodiscard]] bool exact_canonical_ring(const geometry::LinearRing& ring) {
-    const geometry::LinearRingResult canonical =
-        geometry::canonicalize_wgs84_linear_ring(ring.vertices);
-    if (!canonical.ok() || canonical.value.vertices.size() != ring.vertices.size() ||
-        canonical.value.closing_longitude_rad != ring.closing_longitude_rad ||
-        canonical.value.longitude_winding != ring.longitude_winding) {
-        return false;
-    }
-    for (std::size_t index = 0U; index < ring.vertices.size(); ++index) {
-        if (canonical.value.vertices[index].longitude_rad != ring.vertices[index].longitude_rad ||
-            canonical.value.vertices[index].latitude_rad != ring.vertices[index].latitude_rad) {
-            return false;
-        }
-    }
-    if (ring.longitude_winding != 0 &&
-        ring.interior_side == geometry::RingInteriorSide::unspecified) {
-        return false;
-    }
-    return true;
-}
-
 [[nodiscard]] bool map_role(
     const source::RingRole role,
     storage::GeographicRingRole& stored) noexcept {
@@ -182,16 +161,21 @@ SourceBridgeResult record_verified_source_snapshot(
 
         for (std::size_t ring_index = 0U; ring_index < feature.rings.size(); ++ring_index) {
             const source::FeatureRing& ring = feature.rings[ring_index];
-            if (!exact_canonical_ring(ring.geometry)) {
+            const geometry::GeographicError geometry_error =
+                geometry::validate_canonical_wgs84_linear_ring(ring.geometry);
+            if (geometry_error != geometry::GeographicError::none) {
                 return failure(
                     SourceBridgeError::noncanonical_geometry,
                     "adapter feature '" + feature.stable_id + "' ring " +
                         std::to_string(ring_index) +
-                        " is not an exact canonical AERIS geographic ring"
+                        " violates canonical AERIS geographic invariants [geographic_error=" +
+                        std::to_string(static_cast<int>(geometry_error)) + "]"
                 );
             }
-            if (ring.geometry.longitude_winding < static_cast<int>(std::numeric_limits<std::int32_t>::min()) ||
-                ring.geometry.longitude_winding > static_cast<int>(std::numeric_limits<std::int32_t>::max())) {
+            if (static_cast<std::int64_t>(ring.geometry.longitude_winding) <
+                    static_cast<std::int64_t>(std::numeric_limits<std::int32_t>::min()) ||
+                static_cast<std::int64_t>(ring.geometry.longitude_winding) >
+                    static_cast<std::int64_t>(std::numeric_limits<std::int32_t>::max())) {
                 return failure(
                     SourceBridgeError::noncanonical_geometry,
                     "adapter geographic ring winding exceeds the project format int32 domain"
@@ -225,9 +209,6 @@ SourceBridgeResult record_verified_source_snapshot(
             stored.status.diagnostic.empty() ? "project storage rejected verified source dataset" : stored.status.diagnostic
         );
         result.storage_error = stored.status.error;
-        // The lower layer can report an error after SQLite already committed
-        // (for example while refreshing the caller's ProjectStore metadata).
-        // Preserve the durable outcome so recovery never assumes a false rollback.
         result.inserted = stored.inserted;
         result.durably_committed = stored.durably_committed;
         return result;
