@@ -44,6 +44,18 @@ aeris_add_core_test(aeris_test_globe_polygon_verified test_globe_polygon_verifie
 
 if(TARGET aeris_storage)
     aeris_add_storage_test(aeris_test_storage test_storage.cpp project_storage)
+
+    add_executable(aeris_storage_abrupt storage_abrupt.cpp)
+    target_link_libraries(aeris_storage_abrupt PRIVATE AERIS::storage)
+    target_compile_features(aeris_storage_abrupt PRIVATE cxx_std_17)
+    set_target_properties(aeris_storage_abrupt PROPERTIES CXX_EXTENSIONS OFF)
+    aeris_enable_warnings(aeris_storage_abrupt)
+
+    set(AERIS_ABRUPT_PROJECT "${CMAKE_CURRENT_BINARY_DIR}/abrupt-storage/world.aeris")
+    add_test(NAME project_storage_abrupt_write COMMAND aeris_storage_abrupt write ${AERIS_ABRUPT_PROJECT})
+    set_tests_properties(project_storage_abrupt_write PROPERTIES FIXTURES_SETUP aeris_storage_abrupt_fixture)
+    add_test(NAME project_storage_abrupt_verify COMMAND aeris_storage_abrupt verify ${AERIS_ABRUPT_PROJECT})
+    set_tests_properties(project_storage_abrupt_verify PROPERTIES FIXTURES_REQUIRED aeris_storage_abrupt_fixture)
 endif()
 
 if(TARGET aeris_diagnostic_svg)
