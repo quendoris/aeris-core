@@ -4,11 +4,13 @@
 #pragma once
 
 #include "scene.hpp"
+#include "unfold.hpp"
 
 #include <QPoint>
 #include <QWidget>
 
 #include <functional>
+#include <optional>
 
 namespace aeris::viewer {
 
@@ -23,6 +25,12 @@ public:
     void set_camera_callback(CameraCallback callback);
     void set_camera(double longitude_deg, double latitude_deg);
 
+    void begin_unfold(UnfoldBundle bundle);
+    void set_unfold_progress(double progress);
+    [[nodiscard]] const SceneData& finish_unfold();
+    void cancel_unfold();
+    [[nodiscard]] bool is_unfolding() const noexcept { return unfold_.has_value(); }
+
     [[nodiscard]] const SceneData& scene() const noexcept { return scene_; }
 
 protected:
@@ -36,6 +44,8 @@ private:
     void emit_camera(bool final);
 
     SceneData scene_{};
+    std::optional<UnfoldBundle> unfold_;
+    double unfold_progress_ = 0.0;
     bool busy_ = false;
     bool dragging_ = false;
     QPoint last_mouse_{};

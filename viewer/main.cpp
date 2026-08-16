@@ -3,6 +3,7 @@
 
 #include "main_window.hpp"
 #include "scene_builder.hpp"
+#include "unfold.hpp"
 #include "world_loader.hpp"
 
 #include <QApplication>
@@ -22,8 +23,10 @@ struct Arguments final {
     std::filesystem::path snapshot =
         std::filesystem::path("dev-data") / "natural-earth-v5.1.2";
     std::filesystem::path render_path;
+    std::filesystem::path render_unfold_path;
     bool smoke = false;
     bool render = false;
+    bool render_unfold = false;
     bool help = false;
     bool valid = true;
 };
@@ -47,6 +50,13 @@ struct Arguments final {
             }
             arguments.render = true;
             arguments.render_path = argv[++index];
+        } else if (value == "--render-unfold") {
+            if (index + 1 >= argc) {
+                arguments.valid = false;
+                return arguments;
+            }
+            arguments.render_unfold = true;
+            arguments.render_unfold_path = argv[++index];
         } else if (value == "--help" || value == "-h") {
             arguments.help = true;
         } else {
@@ -54,7 +64,11 @@ struct Arguments final {
             return arguments;
         }
     }
-    if (arguments.smoke && arguments.render) {
+    const int exclusive_modes =
+        static_cast<int>(arguments.smoke) +
+        static_cast<int>(arguments.render) +
+        static_cast<int>(arguments.render_unfold);
+    if (exclusive_modes > 1) {
         arguments.valid = false;
     }
     return arguments;
@@ -62,12 +76,31 @@ struct Arguments final {
 
 void print_usage() {
     std::cout
-        << "usage: aeris_viewer [--snapshot <directory>] [--smoke | --render <png>]\n"
+        << "usage: aeris_viewer [--snapshot <directory>] "
+           "[--smoke | --render <png> | --render-unfold <png>]\n"
         << "\n"
         << "The default snapshot directory is dev-data/natural-earth-v5.1.2.\n"
         << "Fetch the exact pinned demo bytes with:\n"
         << "  cmake -DDESTINATION=dev-data/natural-earth-v5.1.2 "
            "-P scripts/fetch_demo_world.cmake\n";
+}
+
+[[nodiscard]] bool save_window_png(
+    QMainWindow& window,
+    QApplication& application,
+    const std::filesystem::path& output_path
+) {
+    window.resize(1280, 820);
+    window.show();
+    application.processEvents();
+
+    QImage image(window.size(), QImage::Format_ARGB32_Premultiplied);
+    image.fill(Qt::transparent);
+    QPainter painter(&image);
+    window.render(&painter);
+    painter.end();
+
+    return image.save(QString::fromStdString(output_path.string()), "PNG");
 }
 
 [[nodiscard]] bool render_verified_workbench(
@@ -89,20 +122,29 @@ void print_usage() {
 
     aeris::viewer::MainWindow window(world, false);
     window.present_scene(std::move(scene));
-    window.resize(1280, 820);
-    window.show();
-    application.processEvents();
+    return save_window_png(window, application, output_path);
+}
 
-    QImage image(window.size(), QImage::Format_ARGB32_Premultiplied);
-    image.fill(Qt::transparent);
-    QPainter painter(&image);
-    window.render(&painter);
-    painter.end();
-
-    return image.save(
-        QString::fromStdString(output_path.string()),
-        "PNG"
+[[nodiscard]] bool render_unfold_workbench(
+    QApplication& application,
+    const std::shared_ptr<const aeris::source::Result>& world,
+    const std::filesystem::path& output_path
+) {
+    auto bundle = aeris::viewer::build_unfold_bundle(
+        *world,
+        15.0,
+        20.0,
+        aeris::viewer::ViewMode::mollweide
     );
+    if (!bundle.ok || bundle.canceled) {
+        std::cerr << "viewer unfold render bundle failed: "
+                  << bundle.diagnostic << '\n';
+        return false;
+    }
+
+    aeris::viewer::MainWindow window(world, false);
+    window.present_unfold_frame(std::move(bundle), 0.5);
+    return save_window_png(window, application, output_path);
 }
 
 }  // namespace
@@ -137,7 +179,7 @@ int main(int argc, char** argv) {
         )
             .arg(QString::fromStdString(arguments.snapshot.string()))
             .arg(QString::fromStdString(loaded.diagnostic));
-        if (arguments.smoke || arguments.render) {
+        if (arguments.smoke || arguments.render || arguments.render_unfold) {
             std::cerr << message.toStdString() << '\n';
         } else {
             QMessageBox::critical(nullptr, QStringLiteral("AERIS source verification"), message);
@@ -146,16 +188,24 @@ int main(int argc, char** argv) {
     }
 
     if (arguments.render) {
-        if (!render_verified_workbench(
-                application,
-                loaded.world,
-                arguments.render_path
-            )) {
+        if (!render_verified_workbench(application, loaded.world, arguments.render_path)) {
             std::cerr << "unable to render viewer PNG\n";
             return EXIT_FAILURE;
         }
-        std::cout << "viewer_render: PASS "
-                  << arguments.render_path.string() << '\n';
+        std::cout << "viewer_render: PASS " << arguments.render_path.string() << '\n';
+        return EXIT_SUCCESS;
+    }
+
+    if (arguments.render_unfold) {
+        if (!render_unfold_workbench(
+                application,
+                loaded.world,
+                arguments.render_unfold_path)) {
+            std::cerr << "unable to render unfold viewer PNG\n";
+            return EXIT_FAILURE;
+        }
+        std::cout << "viewer_unfold_render: PASS "
+                  << arguments.render_unfold_path.string() << '\n';
         return EXIT_SUCCESS;
     }
 

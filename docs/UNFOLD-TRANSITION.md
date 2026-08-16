@@ -19,30 +19,15 @@ Likewise, the globe endpoint uses the ordinary verified globe visibility/fill pi
 
 For progress `p` in the open interval `(0, 1)`, displayed transition geometry is **non-normative**.
 
-It MUST NOT be used for:
+It MUST NOT be used for export geometry, area-preservation claims, project persistence of cartographic coordinates, GIS interchange, measurement, or precision hit-testing.
 
-- export geometry;
-- area-preservation claims;
-- project persistence of cartographic coordinates;
-- GIS interchange;
-- measurement;
-- hit-testing that claims geographic precision.
-
-The UI should identify the transition as such rather than label an intermediate frame `VERIFIED`.
+The UI labels intermediate frames `UNFOLD` / `Transition (non-normative)`, never `VERIFIED`.
 
 ## 3. Geographic guide
 
-The first implementation uses a deterministic geographic guide consisting of:
+The first implementation uses a deterministic geographic guide consisting of meridians every 30 degrees excluding the active projection seam, parallels every 15 degrees from 75°S through 75°N, and two explicit copies of the `-180°/+180°` seam meridian.
 
-- meridians every 30 degrees, excluding the active projection seam;
-- parallels every 15 degrees from 75°S through 75°N;
-- two explicit copies of the `-180°/+180°` seam meridian.
-
-Each guide vertex carries three pieces of information derived from the same WGS84 longitude/geodetic-latitude sample:
-
-1. its authalic-globe orthographic endpoint under the current camera;
-2. its target equal-area planar endpoint;
-3. its signed normalized globe depth.
+Each guide vertex carries its authalic-globe orthographic endpoint, target equal-area planar endpoint, and signed normalized globe depth, all derived from the same WGS84 longitude/geodetic-latitude sample.
 
 The two seam guide lines are intentionally separate even though they are geographically coincident on the sphere. At the globe endpoint they occupy the same spherical meridian; at the planar endpoint they become the left and right projection boundaries. This makes the cut itself visible during unfolding.
 
@@ -56,52 +41,52 @@ Let `p` be UI progress clamped to `[0, 1]` and let
 s(p) = 6p^5 - 15p^4 + 10p^3
 ```
 
-be the quintic smoothstep.
-
-For a guide vertex with globe coordinate `G` and planar coordinate `P`, the displayed guide position is
+be the quintic smoothstep. For a guide vertex with globe coordinate `G` and planar coordinate `P`, the displayed guide position is
 
 ```text
 X(p) = G + s(p) (P - G)
 ```
 
-This guarantees exact endpoint coordinates and zero first/second derivative at the endpoints for the explanatory motion.
+This guarantees exact endpoint coordinates and zero first/second derivative at the endpoints for explanatory motion.
 
-Guide geometry that begins on the hidden globe hemisphere is not shown as if it were initially visible. Hidden guide content is introduced progressively as the surface opens; all guide content is visible by `p = 1`.
+Guide geometry that begins on the hidden globe hemisphere is introduced progressively as the surface opens. The guide itself fades to zero at both normative endpoints so endpoint presentation remains exactly the verified scene presentation.
 
 ## 5. Land and coastline presentation
 
-The verified globe and verified planar endpoint scenes remain separate scene objects. A renderer may cross-fade their fills/outlines around the interpolated geographic guide, but the cross-fade has no cartographic meaning.
+The verified globe and verified planar endpoint scenes remain separate scene objects. The first renderer cross-fades these authoritative endpoint fills/outlines while the geographic guide visibly opens between them.
 
-The renderer MUST preserve exact endpoint behavior:
+The cross-fade has no cartographic meaning. It is a presentation device chosen specifically so AERIS does not invent intermediate land topology and then accidentally promote it to a map.
+
+The renderer preserves exact endpoint behavior:
 
 - `p = 0` displays the verified globe endpoint;
 - `p = 1` displays the verified planar endpoint.
 
-No intermediate fill topology is promoted to canonical geometry merely because it looks visually plausible.
+## 6. Runtime ownership
 
-## 6. Target projections
+Preparing an unfold bundle is a background job because both endpoints are verified. It has its own generation/cancellation ownership contract. A completed bundle for an obsolete camera or target is discarded and cannot overwrite newer viewer state.
 
-The first transition contract supports the independently verified Sinusoidal and Mollweide primitives.
+Once a bundle has been accepted, a 1400 ms UI timer advances presentation progress only. Geographic verification is not rerun for each frame.
 
-This does **not** freeze the historical Philbrick Sinu-Mollweide composition. When the Philbrick region/orientation contract is resolved, it may become another verified planar target without changing the endpoint-separation principle in this document.
+View-changing actions are disabled during the short accepted animation. At completion, the already verified flat endpoint becomes ordinary current viewer state.
 
-## 7. Cancellation and ownership
+## 7. Target projections
 
-Preparing an unfold bundle may be computationally expensive because both endpoints are verified. It therefore follows the same cancellation/stale-result discipline as other viewer jobs.
+The first enabled transition supports the independently verified Sinusoidal and Mollweide primitives. The target is the most recently selected flat view; Mollweide is the initial default before a flat view has been chosen.
 
-A completed bundle for an obsolete camera or target MUST NOT replace newer viewer state.
+This does **not** freeze the historical Philbrick Sinu-Mollweide composition. When the Philbrick region/orientation contract is resolved, it may become another verified planar target without changing the endpoint-separation principle.
 
-Once a bundle has been accepted by the UI, per-frame interpolation is presentation-only and should not rerun geographic verification.
+## 8. Conformance
 
-## 8. Conformance requirements before enabling the UI action
-
-The `Unfold` action remains disabled until automated tests prove at least:
+Viewer CI proves against the exact pinned Natural Earth snapshot that:
 
 - both endpoints are verified production scenes;
 - progress `0` and `1` reproduce guide endpoints exactly;
 - the two seam sides coincide at the globe endpoint and separate at the planar endpoint;
 - invalid globe-as-target requests fail explicitly;
-- cancellation can prevent obsolete bundle delivery;
-- the complete animation can be rendered without changing project/cartographic state.
+- stale background unfold generations are not delivered;
+- scene and unfold jobs retain independent cancellation ownership;
+- an offscreen midpoint frame renders through the same `MainWindow`/`MapCanvas` presentation path used interactively;
+- intermediate frames remain labeled non-normative.
 
-The first enabled viewer milestone should also be exercised against the same exact pinned Natural Earth snapshot used by Viewer CI.
+The transition remains an explanatory UI feature. Nothing in this contract changes equal-area, project-format, or export guarantees.

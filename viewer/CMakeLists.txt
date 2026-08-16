@@ -10,6 +10,7 @@ add_executable(aeris_viewer
     scene_builder.cpp
     scene_controller.cpp
     unfold.cpp
+    unfold_controller.cpp
     world_loader.cpp
 )
 
@@ -37,6 +38,8 @@ add_executable(aeris_viewer_controller_probe
     controller_probe.cpp
     scene_builder.cpp
     scene_controller.cpp
+    unfold.cpp
+    unfold_controller.cpp
     world_loader.cpp
 )
 target_link_libraries(aeris_viewer_controller_probe PRIVATE AERIS::core Qt6::Core)

@@ -14,10 +14,13 @@
 #include <QToolBar>
 #include <QWidget>
 
+#include <algorithm>
 #include <utility>
 
 namespace aeris::viewer {
 namespace {
+
+constexpr qint64 kUnfoldDurationMs = 1400;
 
 [[nodiscard]] QLabel* value_label(QWidget* parent) {
     auto* label = new QLabel(parent);
@@ -46,7 +49,8 @@ MainWindow::MainWindow(
 )
     : QMainWindow(parent),
       world_(std::move(world)),
-      controller_(world_, this) {
+      controller_(world_, this),
+      unfold_controller_(world_, this) {
     build_workbench();
     apply_theme();
 
@@ -54,7 +58,13 @@ MainWindow::MainWindow(
         [this](SceneData scene) { present_scene(std::move(scene)); }
     );
     controller_.set_busy_callback(
-        [this](const bool busy) { apply_busy(busy); }
+        [this](const bool busy) { apply_scene_busy(busy); }
+    );
+    unfold_controller_.set_bundle_callback(
+        [this](UnfoldBundle bundle) { accept_unfold_bundle(std::move(bundle)); }
+    );
+    unfold_controller_.set_busy_callback(
+        [this](const bool busy) { apply_unfold_busy(busy); }
     );
     canvas_->set_camera_callback(
         [this](const double longitude, const double latitude, const bool final) {
@@ -73,6 +83,8 @@ MainWindow::MainWindow(
                 : SceneQuality::preview;
             request.camera_longitude_deg = longitude_deg_;
             request.camera_latitude_deg = latitude_deg_;
+            scene_verified_ = false;
+            update_unfold_action();
             if (final) {
                 controller_.request_verified(request);
             } else {
@@ -80,6 +92,11 @@ MainWindow::MainWindow(
             }
         }
     );
+
+    unfold_timer_.setInterval(16);
+    connect(&unfold_timer_, &QTimer::timeout, this, [this]() {
+        advance_unfold();
+    });
 
     resize(1280, 820);
     setWindowTitle(QStringLiteral("AERIS — Cartographic Workbench"));
@@ -111,17 +128,18 @@ void MainWindow::build_workbench() {
         connect(action, &QAction::triggered, this, [this, mode]() {
             set_mode(mode);
         });
+        return action;
     };
 
-    add_view(QStringLiteral("Globe"), ViewMode::globe, true);
-    add_view(QStringLiteral("Sin"), ViewMode::sinusoidal, false);
-    add_view(QStringLiteral("Moll"), ViewMode::mollweide, false);
+    globe_action_ = add_view(QStringLiteral("Globe"), ViewMode::globe, true);
+    sinusoidal_action_ = add_view(QStringLiteral("Sin"), ViewMode::sinusoidal, false);
+    mollweide_action_ = add_view(QStringLiteral("Moll"), ViewMode::mollweide, false);
     views->addSeparator();
-    auto* unfold = views->addAction(QStringLiteral("Unfold"));
-    unfold->setEnabled(false);
-    unfold->setToolTip(QStringLiteral(
-        "Animation will be enabled after the two endpoint views share a stable interpolation contract."
-    ));
+    unfold_action_ = views->addAction(QStringLiteral("Unfold"));
+    unfold_action_->setEnabled(false);
+    connect(unfold_action_, &QAction::triggered, this, [this]() {
+        start_unfold();
+    });
 
     auto* source_dock = new QDockWidget(QStringLiteral("Source"), this);
     source_dock->setObjectName(QStringLiteral("sourceDock"));
@@ -129,9 +147,7 @@ void MainWindow::build_workbench() {
     source_widget->setMinimumWidth(250);
     auto* source_form = new QFormLayout(source_widget);
     source_value_ = value_label(source_widget);
-    const QString full_hash = QString::fromStdString(
-        world_->provenance.content_sha256
-    );
+    const QString full_hash = QString::fromStdString(world_->provenance.content_sha256);
     source_value_->setText(
         QStringLiteral("%1 / %2\n%3\nSHA-256 %4")
             .arg(QString::fromStdString(world_->provenance.provider))
@@ -166,9 +182,8 @@ void MainWindow::build_workbench() {
     view_dock->setWidget(view_widget);
     addDockWidget(Qt::RightDockWidgetArea, view_dock);
 
-    statusBar()->showMessage(
-        QStringLiteral("Pinned Natural Earth loaded and verified")
-    );
+    statusBar()->showMessage(QStringLiteral("Pinned Natural Earth loaded and verified"));
+    update_unfold_action();
 }
 
 void MainWindow::apply_theme() {
@@ -186,12 +201,26 @@ void MainWindow::apply_theme() {
 }
 
 void MainWindow::set_mode(const ViewMode mode) {
-    if (mode_ == mode) {
+    if (unfold_animating_) {
         return;
     }
+    if (unfold_preparing_) {
+        unfold_controller_.cancel();
+        unfold_preparing_ = false;
+    }
+    if (mode_ == mode && scene_verified_) {
+        update_unfold_action();
+        return;
+    }
+
     mode_ = mode;
+    if (mode != ViewMode::globe) {
+        last_flat_mode_ = mode;
+    }
     mode_value_->setText(QString::fromLatin1(view_mode_name(mode_)));
     camera_value_->setEnabled(mode_ == ViewMode::globe);
+    scene_verified_ = false;
+    update_unfold_action();
     request_current_verified();
 }
 
@@ -204,7 +233,114 @@ void MainWindow::request_current_verified() {
     controller_.request_verified(request);
 }
 
+void MainWindow::start_unfold() {
+    if (mode_ != ViewMode::globe || !scene_verified_ ||
+        scene_busy_ || unfold_preparing_ || unfold_animating_) {
+        return;
+    }
+
+    controller_.cancel();
+    unfold_target_ = last_flat_mode_;
+    unfold_controller_.request(
+        longitude_deg_,
+        latitude_deg_,
+        unfold_target_
+    );
+    statusBar()->showMessage(
+        QStringLiteral("Preparing verified Globe → %1 endpoints…")
+            .arg(QString::fromLatin1(view_mode_name(unfold_target_)))
+    );
+}
+
+void MainWindow::accept_unfold_bundle(UnfoldBundle bundle) {
+    if (!bundle.ok || bundle.canceled) {
+        statusBar()->showMessage(
+            QStringLiteral("Unfold preparation failed: %1")
+                .arg(QString::fromStdString(bundle.diagnostic))
+        );
+        update_unfold_action();
+        return;
+    }
+
+    unfold_target_ = bundle.target_mode;
+    canvas_->begin_unfold(std::move(bundle));
+    unfold_animating_ = true;
+    scene_verified_ = false;
+    set_view_actions_enabled(false);
+    state_value_->setText(QStringLiteral("Transition (non-normative)"));
+    mode_value_->setText(
+        QStringLiteral("Unfold → %1")
+            .arg(QString::fromLatin1(view_mode_name(unfold_target_)))
+    );
+    statusBar()->showMessage(QStringLiteral(
+        "Animating explanatory transition; verified endpoints remain authoritative"
+    ));
+    unfold_clock_.restart();
+    unfold_timer_.start();
+}
+
+void MainWindow::advance_unfold() {
+    if (!unfold_animating_ || !canvas_->is_unfolding()) {
+        unfold_timer_.stop();
+        return;
+    }
+
+    const double progress = std::clamp(
+        static_cast<double>(unfold_clock_.elapsed()) /
+            static_cast<double>(kUnfoldDurationMs),
+        0.0,
+        1.0
+    );
+    canvas_->set_unfold_progress(progress);
+    state_value_->setText(
+        QStringLiteral("Transition %1% (non-normative)")
+            .arg(static_cast<int>(progress * 100.0))
+    );
+
+    if (progress >= 1.0) {
+        finish_unfold_animation();
+    }
+}
+
+void MainWindow::finish_unfold_animation() {
+    unfold_timer_.stop();
+    const SceneData& final_scene = canvas_->finish_unfold();
+    unfold_animating_ = false;
+    mode_ = unfold_target_;
+    last_flat_mode_ = mode_;
+    scene_verified_ = final_scene.ok &&
+        final_scene.quality == SceneQuality::verified;
+    select_mode_action(mode_);
+    set_view_actions_enabled(true);
+    camera_value_->setEnabled(false);
+    update_inspector(final_scene);
+    statusBar()->showMessage(QString::fromStdString(final_scene.diagnostic));
+    update_unfold_action();
+}
+
+void MainWindow::cancel_unfold_activity() {
+    unfold_controller_.cancel();
+    unfold_preparing_ = false;
+    if (unfold_animating_) {
+        unfold_timer_.stop();
+        canvas_->cancel_unfold();
+        unfold_animating_ = false;
+        scene_verified_ = canvas_->scene().ok &&
+            canvas_->scene().quality == SceneQuality::verified;
+        set_view_actions_enabled(true);
+    }
+    update_unfold_action();
+}
+
 void MainWindow::present_scene(SceneData scene) {
+    cancel_unfold_activity();
+    mode_ = scene.mode;
+    if (mode_ != ViewMode::globe) {
+        last_flat_mode_ = mode_;
+    }
+    scene_verified_ = scene.ok && scene.quality == SceneQuality::verified;
+    select_mode_action(mode_);
+    camera_value_->setEnabled(mode_ == ViewMode::globe);
     if (!scene.ok) {
         statusBar()->showMessage(
             QStringLiteral("Scene failed: %1")
@@ -215,13 +351,84 @@ void MainWindow::present_scene(SceneData scene) {
     }
     update_inspector(scene);
     canvas_->set_scene(std::move(scene));
+    update_unfold_action();
 }
 
-void MainWindow::apply_busy(const bool busy) {
-    canvas_->set_busy(busy);
-    state_value_->setText(
-        busy ? QStringLiteral("Verifying…") : QStringLiteral("Ready")
+void MainWindow::present_unfold_frame(UnfoldBundle bundle, const double progress) {
+    cancel_unfold_activity();
+    unfold_target_ = bundle.target_mode;
+    canvas_->begin_unfold(std::move(bundle));
+    canvas_->set_unfold_progress(progress);
+    unfold_animating_ = true;
+    scene_verified_ = false;
+    set_view_actions_enabled(false);
+    mode_value_->setText(
+        QStringLiteral("Unfold → %1")
+            .arg(QString::fromLatin1(view_mode_name(unfold_target_)))
     );
+    state_value_->setText(
+        QStringLiteral("Transition %1% (non-normative)")
+            .arg(static_cast<int>(std::clamp(progress, 0.0, 1.0) * 100.0))
+    );
+}
+
+void MainWindow::apply_scene_busy(const bool busy) {
+    scene_busy_ = busy;
+    refresh_interaction_state();
+}
+
+void MainWindow::apply_unfold_busy(const bool busy) {
+    unfold_preparing_ = busy;
+    refresh_interaction_state();
+}
+
+void MainWindow::refresh_interaction_state() {
+    canvas_->set_busy(scene_busy_ || unfold_preparing_);
+    if (unfold_animating_) {
+        return;
+    }
+    if (unfold_preparing_) {
+        state_value_->setText(QStringLiteral("Preparing unfold…"));
+    } else if (scene_busy_) {
+        state_value_->setText(QStringLiteral("Verifying…"));
+    } else if (!scene_verified_) {
+        state_value_->setText(QStringLiteral("Ready"));
+    }
+    update_unfold_action();
+}
+
+void MainWindow::update_unfold_action() {
+    if (unfold_action_ == nullptr) {
+        return;
+    }
+    unfold_action_->setEnabled(
+        mode_ == ViewMode::globe &&
+        scene_verified_ &&
+        !scene_busy_ &&
+        !unfold_preparing_ &&
+        !unfold_animating_
+    );
+    unfold_action_->setToolTip(
+        QStringLiteral("Animate verified Globe → %1. Intermediate frames are explanatory only.")
+            .arg(QString::fromLatin1(view_mode_name(last_flat_mode_)))
+    );
+}
+
+void MainWindow::set_view_actions_enabled(const bool enabled) {
+    globe_action_->setEnabled(enabled);
+    sinusoidal_action_->setEnabled(enabled);
+    mollweide_action_->setEnabled(enabled);
+    if (!enabled) {
+        unfold_action_->setEnabled(false);
+    } else {
+        update_unfold_action();
+    }
+}
+
+void MainWindow::select_mode_action(const ViewMode mode) {
+    globe_action_->setChecked(mode == ViewMode::globe);
+    sinusoidal_action_->setChecked(mode == ViewMode::sinusoidal);
+    mollweide_action_->setChecked(mode == ViewMode::mollweide);
 }
 
 void MainWindow::update_inspector(const SceneData& scene) {
