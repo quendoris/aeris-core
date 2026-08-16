@@ -6,6 +6,7 @@
 
 #include <array>
 #include <limits>
+#include <system_error>
 #include <utility>
 
 #include <sqlite3.h>
@@ -14,6 +15,7 @@ namespace aeris::storage {
 namespace {
 
 constexpr std::size_t kMaxMetadataText = 255U;
+constexpr int kStagingDirectoryAttempts = 8;
 
 bool is_hex(const char c) noexcept {
     return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
@@ -66,6 +68,29 @@ std::string generated_uuid_v4() {
         value.push_back(digits[bytes[i] & 0x0FU]);
     }
     return value;
+}
+
+Status make_staging_directory(const std::filesystem::path& destination, std::filesystem::path& staging) {
+    std::filesystem::path parent = destination.parent_path();
+    if (parent.empty()) parent = ".";
+
+    for (int attempt = 0; attempt < kStagingDirectoryAttempts; ++attempt) {
+        const std::filesystem::path candidate = parent / (".aeris-create-" + generated_uuid_v4());
+        std::error_code ec;
+        if (std::filesystem::create_directory(candidate, ec)) {
+            staging = candidate;
+            return Status::success();
+        }
+        if (ec && ec != std::make_error_code(std::errc::file_exists)) {
+            return {StorageError::filesystem_failure, "could not create sibling project staging directory: " + ec.message()};
+        }
+    }
+    return {StorageError::filesystem_failure, "could not allocate a unique sibling project staging directory"};
+}
+
+void remove_staging_directory(const std::filesystem::path& staging) noexcept {
+    std::error_code ignored;
+    (void)std::filesystem::remove_all(staging, ignored);
 }
 
 Status validate_create_options(const ProjectCreateOptions& options) {
@@ -258,29 +283,21 @@ ProjectStoreResult ProjectStore::create(const std::filesystem::path& path, const
     Status status = validate_create_options(options);
     if (!status) return {std::move(status), nullptr};
 
-    std::error_code ec;
-    if (std::filesystem::exists(path, ec)) {
-        return {{StorageError::path_exists, "refusing to overwrite an existing project path"}, nullptr};
-    }
-    if (ec) return {{StorageError::invalid_argument, "could not inspect project path: " + ec.message()}, nullptr};
-
-    auto impl = std::make_unique<Impl>();
-    impl->path = path;
-    status = detail::open_database(path, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, impl->db);
+    std::filesystem::path staging;
+    status = make_staging_directory(path, staging);
     if (!status) return {std::move(status), nullptr};
+    const std::filesystem::path staged_path = staging / "project.sqlite";
 
-    const auto cleanup_failed_create = [&]() {
-        impl->db.reset();
-        std::error_code ignored;
-        (void)std::filesystem::remove(path, ignored);
-    };
-
-    if (!(status = detail::configure_durable(impl->db.get()))) {
-        cleanup_failed_create();
+    detail::DbPtr staged_db;
+    status = detail::open_database(staged_path, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, staged_db);
+    if (!status) {
+        remove_staging_directory(staging);
         return {std::move(status), nullptr};
     }
-    if (!(status = detail::begin_immediate(impl->db.get()))) {
-        cleanup_failed_create();
+
+    if (!(status = detail::configure_durable(staged_db.get())) || !(status = detail::begin_immediate(staged_db.get()))) {
+        staged_db.reset();
+        remove_staging_directory(staging);
         return {std::move(status), nullptr};
     }
 
@@ -301,40 +318,72 @@ ProjectStoreResult ProjectStore::create(const std::filesystem::path& path, const
         "worldview_id TEXT NOT NULL,"
         "frozen INTEGER NOT NULL CHECK(frozen IN (0,1))"
         ");";
-    status = detail::exec(impl->db.get(), schema);
+    status = detail::exec(staged_db.get(), schema);
     if (!status) {
-        detail::rollback(impl->db.get());
-        cleanup_failed_create();
+        detail::rollback(staged_db.get());
+        staged_db.reset();
+        remove_staging_directory(staging);
         return {std::move(status), nullptr};
     }
 
-    impl->metadata.project_uuid = options.project_uuid.empty() ? generated_uuid_v4() : options.project_uuid;
-    impl->metadata.created_utc = options.timestamp_utc;
-    impl->metadata.modified_utc = options.timestamp_utc;
-    impl->metadata.producer = options.producer;
-    impl->metadata.producer_version = options.producer_version;
-    impl->metadata.projection_id = options.projection_id;
-    impl->metadata.worldview_id = options.worldview_id;
-    impl->metadata.frozen = options.frozen;
+    ProjectMetadata metadata;
+    metadata.project_uuid = options.project_uuid.empty() ? generated_uuid_v4() : options.project_uuid;
+    metadata.created_utc = options.timestamp_utc;
+    metadata.modified_utc = options.timestamp_utc;
+    metadata.producer = options.producer;
+    metadata.producer_version = options.producer_version;
+    metadata.projection_id = options.projection_id;
+    metadata.worldview_id = options.worldview_id;
+    metadata.frozen = options.frozen;
 
-    status = insert_metadata(impl->db.get(), impl->metadata);
+    status = insert_metadata(staged_db.get(), metadata);
     if (!status) {
-        detail::rollback(impl->db.get());
-        cleanup_failed_create();
+        detail::rollback(staged_db.get());
+        staged_db.reset();
+        remove_staging_directory(staging);
         return {std::move(status), nullptr};
     }
-    status = detail::commit(impl->db.get());
+    status = detail::commit(staged_db.get());
     if (!status) {
-        detail::rollback(impl->db.get());
-        cleanup_failed_create();
+        detail::rollback(staged_db.get());
+        staged_db.reset();
+        remove_staging_directory(staging);
         return {std::move(status), nullptr};
     }
-    status = detail::verify_quick_check(impl->db.get());
+    status = detail::verify_quick_check(staged_db.get());
     if (!status) {
-        cleanup_failed_create();
+        staged_db.reset();
+        remove_staging_directory(staging);
         return {std::move(status), nullptr};
     }
-    return {Status::success(), std::unique_ptr<ProjectStore>(new ProjectStore(std::move(impl)))};
+    staged_db.reset();
+
+    std::error_code publish_error;
+    std::filesystem::create_hard_link(staged_path, path, publish_error);
+    if (publish_error) {
+        remove_staging_directory(staging);
+        if (publish_error == std::make_error_code(std::errc::file_exists)) {
+            return {{StorageError::path_exists, "refusing to overwrite an existing project path"}, nullptr};
+        }
+        return {{StorageError::filesystem_failure,
+                 "could not atomically publish the staged project without overwrite: " + publish_error.message()},
+                nullptr};
+    }
+
+    auto published = ProjectStore::open(path);
+    if (!published.ok()) {
+        std::error_code equivalent_error;
+        const bool same_file = std::filesystem::equivalent(staged_path, path, equivalent_error);
+        if (!equivalent_error && same_file) {
+            std::error_code ignored;
+            (void)std::filesystem::remove(path, ignored);
+        }
+        remove_staging_directory(staging);
+        return published;
+    }
+
+    remove_staging_directory(staging);
+    return published;
 }
 
 ProjectStoreResult ProjectStore::open(const std::filesystem::path& path) {

@@ -29,6 +29,14 @@ void expect_error(const aeris::storage::Status& status, const aeris::storage::St
     }
 }
 
+bool has_staging_directory(const std::filesystem::path& root) {
+    std::error_code ec;
+    for (std::filesystem::directory_iterator it(root, ec), end; !ec && it != end; it.increment(ec)) {
+        if (it->path().filename().string().rfind(".aeris-create-", 0U) == 0U) return true;
+    }
+    return false;
+}
+
 }  // namespace
 
 int main() {
@@ -56,19 +64,22 @@ int main() {
     create_options.producer_version = "0.1.0-test";
 
     auto created = ProjectStore::create(project_path, create_options);
-    expect(created.ok(), "project creation should succeed");
+    expect(created.ok(), "project creation should succeed through atomic no-overwrite publication");
     if (!created.ok()) {
         std::cerr << created.status.diagnostic << '\n';
         return 1;
     }
     expect(std::filesystem::exists(project_path), "project file should exist immediately after acknowledged creation");
+    expect(!has_staging_directory(root), "successful project create must remove sibling staging state");
     expect(created.store->metadata().project_uuid == uuid, "project UUID should match explicit create identity");
     expect(created.store->metadata().revision == 0U, "new project revision should be zero");
     expect(created.store->metadata().projection_id == "aeris.projection.unspecified", "new project projection should be explicit unspecified value");
     expect(created.store->verify_integrity().ok(), "new project should pass integrity verification");
 
     auto duplicate = ProjectStore::create(project_path, create_options);
-    expect_error(duplicate.status, StorageError::path_exists, "project create must refuse overwrite");
+    expect_error(duplicate.status, StorageError::path_exists, "project create must refuse overwrite at atomic publish step");
+    expect(!has_staging_directory(root), "failed no-overwrite publication must clean sibling staging state");
+    expect(created.store->metadata().revision == 0U, "failed duplicate create must not mutate the already-open project");
 
     ProjectMetadataUpdate update;
     update.modified_utc = "2026-08-16T18:10:01Z";

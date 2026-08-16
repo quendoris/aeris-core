@@ -11,6 +11,7 @@ enum class StorageError {
     invalid_argument,
     path_exists,
     file_not_found,
+    filesystem_failure,
     sqlite_open_failed,
     sqlite_failure,
     invalid_application_id,
