@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "aeris/storage/provenance.hpp"
 
+#include "aeris/storage/geography.hpp"
+#include "geography_codec.hpp"
 #include "sqlite_detail.hpp"
 
 #include <algorithm>
@@ -249,6 +251,29 @@ Status insert_record(sqlite3* db, const SourceSnapshotRecord& record) {
     return Status::success();
 }
 
+Status advance_project_revision(
+    sqlite3* db,
+    const ProjectStore& project,
+    const std::string_view modified_utc) {
+    sqlite3_int64 current_revision = 0;
+    Status status = detail::query_single_int(db, "SELECT revision FROM aeris_meta WHERE id=1;", current_revision);
+    if (!status) return status;
+    if (current_revision < 0 || current_revision == std::numeric_limits<sqlite3_int64>::max()) {
+        return {StorageError::schema_invalid, "project revision cannot be incremented for source mutation"};
+    }
+
+    detail::StmtPtr meta_stmt;
+    status = detail::prepare(db, "UPDATE aeris_meta SET revision=?,modified_utc=? WHERE id=1 AND project_uuid=?;", meta_stmt);
+    if (status) status = detail::bind_int64(db, meta_stmt.get(), 1, current_revision + 1);
+    if (status) status = detail::bind_text(db, meta_stmt.get(), 2, std::string(modified_utc));
+    if (status) status = detail::bind_text(db, meta_stmt.get(), 3, project.metadata().project_uuid);
+    if (status) status = detail::step_done(db, meta_stmt.get());
+    if (status && sqlite3_changes(db) != 1) {
+        return {StorageError::schema_invalid, "source mutation could not advance exactly one project metadata row"};
+    }
+    return status;
+}
+
 }  // namespace
 
 bool is_canonical_sha256(const std::string_view value) noexcept {
@@ -294,30 +319,70 @@ SourceSnapshotMutationResult store_source_snapshot(
     }
 
     status = insert_record(db.get(), record);
+    if (!status || !(status = advance_project_revision(db.get(), project, modified_utc))) {
+        detail::rollback(db.get());
+        return {std::move(status), false, false};
+    }
+    status = detail::commit(db.get());
     if (!status) {
         detail::rollback(db.get());
         return {std::move(status), false, false};
     }
 
-    sqlite3_int64 current_revision = 0;
-    if (!(status = detail::query_single_int(db.get(), "SELECT revision FROM aeris_meta WHERE id=1;", current_revision))) {
+    status = project.refresh_metadata();
+    if (!status) return {std::move(status), true, true};
+    return {Status::success(), true, true};
+}
+
+SourceDatasetMutationResult store_source_dataset(
+    ProjectStore& project,
+    const SourceDatasetRecord& input,
+    const std::string_view modified_utc) {
+    if (!is_canonical_utc_timestamp(modified_utc)) {
+        return {{StorageError::invalid_argument, "source dataset mutation timestamp is not canonical Gregorian UTC"}, false, false};
+    }
+
+    SourceDatasetRecord record = input;
+    Status status = validate_record(record.source);
+    if (!status) return {std::move(status), false, false};
+    canonicalize_resources(record.source);
+    if (!(status = detail::canonicalize_feature_records(record.features))) {
+        return {std::move(status), false, false};
+    }
+
+    detail::DbPtr db;
+    status = detail::open_database(project.path(), SQLITE_OPEN_READWRITE, db);
+    if (!status) return {std::move(status), false, false};
+    if (!(status = validate_project_connection(db.get(), project))) return {std::move(status), false, false};
+    if (!(status = detail::configure_durable(db.get()))) return {std::move(status), false, false};
+    if (!(status = detail::begin_immediate(db.get()))) return {std::move(status), false, false};
+
+    std::optional<SourceSnapshotRecord> existing;
+    status = load_existing(db.get(), record.source.source_id, existing);
+    if (!status) {
         detail::rollback(db.get());
         return {std::move(status), false, false};
     }
-    if (current_revision < 0 || current_revision == std::numeric_limits<sqlite3_int64>::max()) {
+    if (existing) {
+        std::vector<SourceFeatureRecord> existing_features;
+        status = detail::load_feature_records(db.get(), record.source.source_id, existing_features);
+        if (!status) {
+            detail::rollback(db.get());
+            return {std::move(status), false, false};
+        }
+        const bool identical =
+            equal_record(*existing, record.source) &&
+            detail::equal_feature_records(existing_features, record.features);
         detail::rollback(db.get());
-        return {{StorageError::schema_invalid, "project revision cannot be incremented for source mutation"}, false, false};
+        status = project.refresh_metadata();
+        if (!status) return {std::move(status), false, false};
+        if (identical) return {Status::success(), false, false};
+        return {{StorageError::record_exists, "source ID already exists with different immutable provenance or geography"}, false, false};
     }
 
-    detail::StmtPtr meta_stmt;
-    status = detail::prepare(db.get(), "UPDATE aeris_meta SET revision=?,modified_utc=? WHERE id=1 AND project_uuid=?;", meta_stmt);
-    if (status) status = detail::bind_int64(db.get(), meta_stmt.get(), 1, current_revision + 1);
-    if (status) status = detail::bind_text(db.get(), meta_stmt.get(), 2, std::string(modified_utc));
-    if (status) status = detail::bind_text(db.get(), meta_stmt.get(), 3, project.metadata().project_uuid);
-    if (status) status = detail::step_done(db.get(), meta_stmt.get());
-    if (status && sqlite3_changes(db.get()) != 1) {
-        status = {StorageError::schema_invalid, "source mutation could not advance exactly one project metadata row"};
-    }
+    status = insert_record(db.get(), record.source);
+    if (status) status = detail::insert_feature_records(db.get(), record.source.source_id, record.features);
+    if (status) status = advance_project_revision(db.get(), project, modified_utc);
     if (!status) {
         detail::rollback(db.get());
         return {std::move(status), false, false};
@@ -372,6 +437,32 @@ SourceSnapshotListResult list_source_snapshots(const ProjectStore& project) {
         result.records.push_back(std::move(record));
     }
     result.status = Status::success();
+    return result;
+}
+
+SourceFeatureListResult list_source_features(
+    const ProjectStore& project,
+    const std::string_view source_id) {
+    const std::string id(source_id);
+    if (!bounded_text(id, kMaxIdentifierBytes)) {
+        return {{StorageError::invalid_argument, "source ID is empty, contains NUL, or exceeds 255 bytes"}, {}};
+    }
+
+    detail::DbPtr db;
+    Status status = detail::open_database(project.path(), SQLITE_OPEN_READONLY, db);
+    if (!status) return {std::move(status), {}};
+    if (!(status = validate_project_connection(db.get(), project))) return {std::move(status), {}};
+
+    std::optional<SourceSnapshotRecord> existing;
+    if (!(status = load_existing(db.get(), id, existing))) return {std::move(status), {}};
+    if (!existing) {
+        return {{StorageError::invalid_argument, "source ID does not exist in the project"}, {}};
+    }
+
+    SourceFeatureListResult result;
+    status = detail::load_feature_records(db.get(), id, result.records);
+    result.status = std::move(status);
+    if (!result.status) result.records.clear();
     return result;
 }
 
