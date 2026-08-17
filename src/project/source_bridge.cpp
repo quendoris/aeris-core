@@ -3,8 +3,9 @@
 
 #include "aeris/project/source_bridge.hpp"
 
-#include "aeris/storage/provenance.hpp"
+#include "aeris/storage/dataset.hpp"
 
+#include <cstdint>
 #include <limits>
 #include <utility>
 
@@ -34,6 +35,37 @@ namespace {
            provenance.source_uri == manifest.source_uri &&
            provenance.retrieved_at_utc == manifest.retrieved_at_utc &&
            provenance.content_sha256 == snapshot.content_sha256();
+}
+
+[[nodiscard]] bool map_role(
+    const source::RingRole role,
+    storage::StoredRingRole& stored) noexcept {
+    switch (role) {
+        case source::RingRole::exterior:
+            stored = storage::StoredRingRole::exterior;
+            return true;
+        case source::RingRole::interior:
+            stored = storage::StoredRingRole::interior;
+            return true;
+    }
+    return false;
+}
+
+[[nodiscard]] bool map_interior_side(
+    const geometry::RingInteriorSide side,
+    storage::StoredInteriorSide& stored) noexcept {
+    switch (side) {
+        case geometry::RingInteriorSide::unspecified:
+            stored = storage::StoredInteriorSide::unspecified;
+            return true;
+        case geometry::RingInteriorSide::left:
+            stored = storage::StoredInteriorSide::left;
+            return true;
+        case geometry::RingInteriorSide::right:
+            stored = storage::StoredInteriorSide::right;
+            return true;
+    }
+    return false;
 }
 
 }  // namespace
@@ -82,11 +114,13 @@ SourceBridgeResult record_verified_source_snapshot(
         );
     }
 
-    storage::SourceSnapshotRecord record{};
+    storage::SourceDatasetRecord dataset{};
+    storage::SourceSnapshotRecord& record = dataset.source;
     record.source_id = request.source_id;
-    record.adapter_id = std::string(adapter->descriptor().adapter_id);
+    const source::AdapterDescriptor descriptor = adapter->descriptor();
+    record.adapter_id = std::string(descriptor.adapter_id);
     record.capability_bits = source::capability_bit(request.binding.capability);
-    record.temporal_class = static_cast<std::uint8_t>(adapter->descriptor().temporal_class);
+    record.temporal_class = static_cast<std::uint8_t>(descriptor.temporal_class);
     record.provider = provenance.provider;
     record.dataset = provenance.dataset;
     record.snapshot = provenance.snapshot;
@@ -115,18 +149,54 @@ SourceBridgeResult record_verified_source_snapshot(
         record.resources.push_back(std::move(stored));
     }
 
-    const storage::SourceSnapshotMutationResult stored =
-        storage::store_source_snapshot(project, record, request.modified_utc);
+    dataset.geometry.source_id = request.source_id;
+    dataset.geometry.features.reserve(loaded.source.features.size());
+    for (const source::Feature& feature : loaded.source.features) {
+        storage::FeatureGeometryRecord stored_feature{};
+        stored_feature.stable_id = feature.stable_id;
+        stored_feature.source_feature_id = feature.source_id;
+        stored_feature.rings.reserve(feature.rings.size());
+
+        for (const source::FeatureRing& ring : feature.rings) {
+            storage::GeographicRingRecord stored_ring{};
+            if (!map_role(ring.role, stored_ring.role) ||
+                !map_interior_side(ring.geometry.interior_side, stored_ring.interior_side)) {
+                return failure(
+                    SourceBridgeError::invalid_request,
+                    "adapter geographic ring contains an unsupported topology enum value"
+                );
+            }
+
+            const auto winding = static_cast<long long>(ring.geometry.longitude_winding);
+            if (winding < static_cast<long long>(std::numeric_limits<std::int32_t>::min()) ||
+                winding > static_cast<long long>(std::numeric_limits<std::int32_t>::max())) {
+                return failure(
+                    SourceBridgeError::invalid_request,
+                    "adapter geographic ring winding exceeds the project format int32 domain"
+                );
+            }
+
+            stored_ring.longitude_winding = static_cast<std::int32_t>(winding);
+            stored_ring.closing_longitude_rad = ring.geometry.closing_longitude_rad;
+            stored_ring.vertices.reserve(ring.geometry.vertices.size());
+            for (const geometry::GeodeticPoint point : ring.geometry.vertices) {
+                stored_ring.vertices.push_back({point.longitude_rad, point.latitude_rad});
+            }
+            stored_feature.rings.push_back(std::move(stored_ring));
+        }
+        dataset.geometry.features.push_back(std::move(stored_feature));
+    }
+
+    const storage::SourceDatasetMutationResult stored =
+        storage::store_source_dataset(project, dataset, request.modified_utc);
     if (!stored.ok()) {
         SourceBridgeResult result = failure(
             SourceBridgeError::storage_rejected,
-            stored.status.diagnostic.empty() ? "project storage rejected verified source provenance" : stored.status.diagnostic
+            stored.status.diagnostic.empty()
+                ? "project storage rejected verified source dataset"
+                : stored.status.diagnostic
         );
         result.storage_error = stored.status.error;
-        // A storage error after SQLite commit (for example, failure to refresh
-        // the caller's open ProjectStore metadata) must not erase the durable
-        // outcome. Recovery logic needs to know that the mutation is already
-        // present on disk even though the overall operation returned an error.
         result.inserted = stored.inserted;
         result.durably_committed = stored.durably_committed;
         return result;
