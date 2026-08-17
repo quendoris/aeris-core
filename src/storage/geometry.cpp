@@ -766,6 +766,41 @@ FeatureGeometryLoadResult load_feature_geometry(
 
 namespace detail {
 
+Status prepare_source_geometry(SourceGeometryRecord& record) {
+    canonicalize_source_geometry(record);
+    return validate_source_geometry(record);
+}
+
+Status inspect_source_geometry(
+    sqlite3* db,
+    const SourceGeometryRecord& record,
+    ExistingRecordState& state) {
+    std::optional<std::size_t> existing_count;
+    Status status = load_geometry_marker(db, record.source_id, existing_count);
+    if (!status) return status;
+    if (!existing_count.has_value()) {
+        state = ExistingRecordState::absent;
+        return Status::success();
+    }
+
+    bool identical = false;
+    status = existing_geometry_equals(db, record, identical);
+    if (!status) return status;
+    state = identical ? ExistingRecordState::identical : ExistingRecordState::conflict;
+    return Status::success();
+}
+
+Status insert_source_geometry_rows(sqlite3* db, const SourceGeometryRecord& record) {
+    bool parent_exists = false;
+    Status status = source_exists(db, record.source_id, parent_exists);
+    if (!status) return status;
+    if (!parent_exists) {
+        return {StorageError::record_not_found,
+                "canonical geometry requires an already-persisted source provenance row"};
+    }
+    return insert_geometry(db, record);
+}
+
 Status verify_geometry_semantics(const ProjectStore& project) {
     DbPtr db;
     Status status = open_database(project.path(), SQLITE_OPEN_READONLY, db);
