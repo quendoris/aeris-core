@@ -68,6 +68,15 @@ namespace {
     return false;
 }
 
+[[nodiscard]] storage::StoredFeaturePropertyValue map_property_value(
+    const source::FeaturePropertyValue& value) {
+    return std::visit(
+        [](const auto& item) -> storage::StoredFeaturePropertyValue {
+            return item;
+        },
+        value);
+}
+
 }  // namespace
 
 SourceBridgeResult record_verified_source_snapshot(
@@ -151,6 +160,12 @@ SourceBridgeResult record_verified_source_snapshot(
 
     dataset.geometry.source_id = request.source_id;
     dataset.geometry.features.reserve(loaded.source.features.size());
+    if (loaded.source.feature_properties_complete) {
+        dataset.feature_properties.emplace();
+        dataset.feature_properties->source_id = request.source_id;
+        dataset.feature_properties->features.reserve(loaded.source.features.size());
+    }
+
     for (const source::Feature& feature : loaded.source.features) {
         storage::FeatureGeometryRecord stored_feature{};
         stored_feature.stable_id = feature.stable_id;
@@ -185,6 +200,19 @@ SourceBridgeResult record_verified_source_snapshot(
             stored_feature.rings.push_back(std::move(stored_ring));
         }
         dataset.geometry.features.push_back(std::move(stored_feature));
+
+        if (dataset.feature_properties.has_value()) {
+            storage::FeaturePropertiesRecord stored_properties{};
+            stored_properties.stable_id = feature.stable_id;
+            stored_properties.properties.reserve(feature.properties.size());
+            for (const source::FeatureProperty& property : feature.properties) {
+                storage::StoredFeatureProperty stored_property{};
+                stored_property.key = property.key;
+                stored_property.value = map_property_value(property.value);
+                stored_properties.properties.push_back(std::move(stored_property));
+            }
+            dataset.feature_properties->features.push_back(std::move(stored_properties));
+        }
     }
 
     const storage::SourceDatasetMutationResult stored =
