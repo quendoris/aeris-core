@@ -3,6 +3,7 @@
 #include "aeris/storage/project.hpp"
 
 #include "geometry_detail.hpp"
+#include "layer_detail.hpp"
 #include "resource_detail.hpp"
 #include "sqlite_detail.hpp"
 
@@ -169,7 +170,10 @@ Status validate_schema_surface(sqlite3* db) {
              "SELECT source_id,stable_id,source_feature_id,ring_count FROM aeris_feature LIMIT 0;",
              "SELECT source_id,stable_id,ring_index,role,interior_side,longitude_winding,closing_longitude_f64le,vertex_count,vertices_f64le FROM aeris_feature_ring LIMIT 0;",
              "SELECT resource_id,sha256,media_type,size_bytes,storage_mode,retrieval_uri,required_for_reproduction,chunk_count FROM aeris_resource LIMIT 0;",
-             "SELECT resource_id,chunk_index,sha256,payload FROM aeris_resource_chunk LIMIT 0;"}) {
+             "SELECT resource_id,chunk_index,sha256,payload FROM aeris_resource_chunk LIMIT 0;",
+             "SELECT layer_id,role_id,name,ordinal,visible FROM aeris_layer LIMIT 0;",
+             "SELECT layer_id,slot_id,source_id FROM aeris_layer_source LIMIT 0;",
+             "SELECT layer_id,slot_id,resource_id FROM aeris_layer_resource LIMIT 0;"}) {
         detail::StmtPtr stmt;
         Status status = detail::prepare(db, sql, stmt);
         if (!status) {
@@ -398,7 +402,7 @@ ProjectStoreResult ProjectStore::create(
 
     const char* schema =
         "PRAGMA application_id=1095062089;"
-        "PRAGMA user_version=4;"
+        "PRAGMA user_version=5;"
         "CREATE TABLE aeris_meta("
         "id INTEGER PRIMARY KEY CHECK(id=1),"
         "project_uuid TEXT NOT NULL,"
@@ -480,6 +484,25 @@ ProjectStoreResult ProjectStore::create(
         "sha256 TEXT NOT NULL,"
         "payload BLOB NOT NULL CHECK(length(payload)>0 AND length(payload)<=1048576),"
         "PRIMARY KEY(resource_id,chunk_index)"
+        ");"
+        "CREATE TABLE aeris_layer("
+        "layer_id TEXT PRIMARY KEY,"
+        "role_id TEXT NOT NULL,"
+        "name TEXT NOT NULL,"
+        "ordinal INTEGER NOT NULL UNIQUE CHECK(ordinal>=0),"
+        "visible INTEGER NOT NULL CHECK(visible IN (0,1))"
+        ");"
+        "CREATE TABLE aeris_layer_source("
+        "layer_id TEXT NOT NULL REFERENCES aeris_layer(layer_id) ON DELETE CASCADE,"
+        "slot_id TEXT NOT NULL,"
+        "source_id TEXT NOT NULL REFERENCES aeris_source(source_id),"
+        "PRIMARY KEY(layer_id,slot_id)"
+        ");"
+        "CREATE TABLE aeris_layer_resource("
+        "layer_id TEXT NOT NULL REFERENCES aeris_layer(layer_id) ON DELETE CASCADE,"
+        "slot_id TEXT NOT NULL,"
+        "resource_id TEXT NOT NULL REFERENCES aeris_resource(resource_id),"
+        "PRIMARY KEY(layer_id,slot_id)"
         ");";
     status = detail::exec(staged_db.get(), schema);
     if (!status) {
@@ -677,7 +700,8 @@ Status ProjectStore::verify_integrity() const {
     if (!(status = validate_schema_surface(impl_->db.get()))) return status;
     if (!(status = validate_frozen_claim(impl_->db.get(), metadata))) return status;
     if (!(status = detail::verify_geometry_semantics(*this))) return status;
-    return detail::verify_resource_semantics(*this);
+    if (!(status = detail::verify_resource_semantics(*this))) return status;
+    return detail::verify_layer_semantics(*this);
 }
 
 }  // namespace aeris::storage
