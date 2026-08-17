@@ -19,7 +19,8 @@ constexpr double kPi = 3.141592653589793238462643383279502884;
 
 [[nodiscard]] std::uint64_t stable_hash(const std::string_view value) noexcept {
     std::uint64_t hash = 1469598103934665603ULL;
-    for (const unsigned char byte : value) {
+    for (const char raw : value) {
+        const auto byte = static_cast<unsigned char>(raw);
         hash ^= static_cast<std::uint64_t>(byte);
         hash *= 1099511628211ULL;
     }
