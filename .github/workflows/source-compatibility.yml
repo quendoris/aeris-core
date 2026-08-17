@@ -13,6 +13,7 @@ on:
       - tools/real_world_globe_probe.cpp
       - tools/real_world_globe_fill_probe.cpp
       - tools/shapefile_projection_probe.cpp
+      - tools/natural_earth_admin0_probe.cpp
       - CMakeLists.txt
       - include/aeris/source/**
       - src/source/**
@@ -30,6 +31,7 @@ on:
       - tools/real_world_globe_probe.cpp
       - tools/real_world_globe_fill_probe.cpp
       - tools/shapefile_projection_probe.cpp
+      - tools/natural_earth_admin0_probe.cpp
       - CMakeLists.txt
       - include/aeris/source/**
       - src/source/**
@@ -137,3 +139,47 @@ jobs:
             ${{ runner.temp }}/aeris-natural-earth-v5.1.2-globe-filled.svg
           if-no-files-found: error
           retention-days: 14
+
+  natural-earth-110m-admin0:
+    name: Natural Earth v5.1.2 / admin0 typed-property proof
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Fetch exact pinned admin0 bytes
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/natural-earth-admin0-v5.1.2"
+          mkdir -p "$root"
+          base="https://raw.githubusercontent.com/nvkelso/natural-earth-vector/f1890d9f152c896d250a77557a5751a93d494776/110m_cultural"
+          for file in \
+            ne_110m_admin_0_countries.shp \
+            ne_110m_admin_0_countries.dbf \
+            ne_110m_admin_0_countries.cpg \
+            ne_110m_admin_0_countries.prj \
+            ne_110m_admin_0_countries.VERSION.txt; do
+            curl --proto '=https' --tlsv1.2 --fail --location --retry 3 \
+              --output "$root/$file" "$base/$file"
+          done
+
+      - name: Build admin0 source proof
+        run: >-
+          cmake -S . -B build-admin0
+          -DAERIS_BUILD_TESTS=OFF
+          -DAERIS_BUILD_TOOLS=ON
+          -DAERIS_WARNINGS_AS_ERRORS=ON
+          -DCMAKE_BUILD_TYPE=Release
+      - name: Compile admin0 source proof
+        run: cmake --build build-admin0 --target aeris_natural_earth_admin0_probe --parallel 2
+
+      - name: Verify SHP-DBF join and complete typed properties
+        shell: bash
+        run: |
+          set -euo pipefail
+          retrieved_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          ./build-admin0/aeris_natural_earth_admin0_probe \
+            "$RUNNER_TEMP/natural-earth-admin0-v5.1.2" \
+            "$retrieved_at"

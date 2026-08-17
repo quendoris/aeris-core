@@ -16,4 +16,13 @@ public:
     ) const override;
 };
 
+class NaturalEarthAdmin0Countries110mAdapter final : public Adapter {
+public:
+    [[nodiscard]] AdapterDescriptor descriptor() const noexcept override;
+    [[nodiscard]] Result load(
+        const VerifiedSnapshot& snapshot,
+        const Request& request
+    ) const override;
+};
+
 }  // namespace aeris::source

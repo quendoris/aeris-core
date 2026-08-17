@@ -57,6 +57,7 @@ add_library(aeris_core STATIC
     src/projection/wgs84.cpp
     src/source/acquisition.cpp
     src/source/adapter.cpp
+    src/source/dbf.cpp
     src/source/natural_earth.cpp
     src/source/registry.cpp
     src/source/shapefile.cpp
@@ -156,12 +157,24 @@ if(AERIS_BUILD_TOOLS)
     set_target_properties(aeris_shapefile_projection_probe PROPERTIES CXX_EXTENSIONS OFF)
     aeris_enable_warnings(aeris_shapefile_projection_probe)
 
+    add_executable(aeris_natural_earth_admin0_probe tools/natural_earth_admin0_probe.cpp)
+    target_link_libraries(aeris_natural_earth_admin0_probe PRIVATE AERIS::core)
+    target_compile_features(aeris_natural_earth_admin0_probe PRIVATE cxx_std_17)
+    set_target_properties(aeris_natural_earth_admin0_probe PROPERTIES CXX_EXTENSIONS OFF)
+    aeris_enable_warnings(aeris_natural_earth_admin0_probe)
+
     if(TARGET aeris_project)
         add_executable(aeris_project_natural_earth_probe tools/project_natural_earth_probe.cpp)
         target_link_libraries(aeris_project_natural_earth_probe PRIVATE AERIS::project)
         target_compile_features(aeris_project_natural_earth_probe PRIVATE cxx_std_17)
         set_target_properties(aeris_project_natural_earth_probe PROPERTIES CXX_EXTENSIONS OFF)
         aeris_enable_warnings(aeris_project_natural_earth_probe)
+
+        add_executable(aeris_project_natural_earth_admin0_probe tools/project_natural_earth_admin0_probe.cpp)
+        target_link_libraries(aeris_project_natural_earth_admin0_probe PRIVATE AERIS::project)
+        target_compile_features(aeris_project_natural_earth_admin0_probe PRIVATE cxx_std_17)
+        set_target_properties(aeris_project_natural_earth_admin0_probe PROPERTIES CXX_EXTENSIONS OFF)
+        aeris_enable_warnings(aeris_project_natural_earth_admin0_probe)
     endif()
 endif()
 
