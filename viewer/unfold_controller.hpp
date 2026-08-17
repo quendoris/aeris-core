@@ -29,6 +29,7 @@ public:
 
     void set_bundle_callback(BundleCallback callback);
     void set_busy_callback(BusyCallback callback);
+    void set_world(std::shared_ptr<const source::Result> world);
 
     void request(
         double camera_longitude_deg,
