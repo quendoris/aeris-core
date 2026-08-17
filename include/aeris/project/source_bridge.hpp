@@ -17,6 +17,7 @@ enum class SourceBridgeError : std::uint8_t {
     registry_rejected,
     verified_snapshot_mismatch,
     resource_size_overflow,
+    geometry_mapping_failed,
     storage_rejected,
 };
 
