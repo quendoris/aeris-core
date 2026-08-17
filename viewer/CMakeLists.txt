@@ -51,3 +51,12 @@ target_link_libraries(aeris_viewer_controller_probe PRIVATE AERIS::core Qt6::Cor
 target_compile_features(aeris_viewer_controller_probe PRIVATE cxx_std_17)
 set_target_properties(aeris_viewer_controller_probe PROPERTIES CXX_EXTENSIONS OFF)
 aeris_enable_warnings(aeris_viewer_controller_probe)
+
+add_executable(aeris_viewer_layer_stack_probe
+    layer_stack_probe.cpp
+    layer_stack.cpp
+)
+target_link_libraries(aeris_viewer_layer_stack_probe PRIVATE AERIS::core)
+target_compile_features(aeris_viewer_layer_stack_probe PRIVATE cxx_std_17)
+set_target_properties(aeris_viewer_layer_stack_probe PROPERTIES CXX_EXTENSIONS OFF)
+aeris_enable_warnings(aeris_viewer_layer_stack_probe)
