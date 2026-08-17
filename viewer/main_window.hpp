@@ -4,6 +4,7 @@
 #pragma once
 
 #include "aeris/source/adapter.hpp"
+#include "layer_stack.hpp"
 #include "scene_controller.hpp"
 #include "unfold_controller.hpp"
 #include "world_loader.hpp"
@@ -16,6 +17,7 @@
 
 class QAction;
 class QLabel;
+class QTreeWidget;
 
 namespace aeris::viewer {
 
@@ -45,6 +47,8 @@ private:
     void finish_unfold_animation();
     void update_inspector(const SceneData& scene);
     void update_source_inspector();
+    void rebuild_layer_tree();
+    void apply_layer_state();
     void apply_scene_busy(bool busy);
     void apply_unfold_busy(bool busy);
     void refresh_interaction_state();
@@ -60,7 +64,9 @@ private:
     std::shared_ptr<const source::Result> world_;
     SceneController controller_;
     UnfoldController unfold_controller_;
+    LayerStackState layer_stack_;
     MapCanvas* canvas_ = nullptr;
+    QTreeWidget* layer_tree_ = nullptr;
     QLabel* source_value_ = nullptr;
     QLabel* content_value_ = nullptr;
     QLabel* mode_value_ = nullptr;
