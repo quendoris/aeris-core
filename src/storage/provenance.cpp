@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "aeris/storage/provenance.hpp"
 
+#include "provenance_detail.hpp"
 #include "sqlite_detail.hpp"
 
 #include <algorithm>
@@ -250,6 +251,36 @@ Status insert_record(sqlite3* db, const SourceSnapshotRecord& record) {
 }
 
 }  // namespace
+
+namespace detail {
+
+Status canonicalize_and_validate_source_snapshot_record(SourceSnapshotRecord& record) {
+    Status status = validate_record(record);
+    if (!status) return status;
+    canonicalize_resources(record);
+    return Status::success();
+}
+
+bool equal_source_snapshot_records(
+    const SourceSnapshotRecord& a,
+    const SourceSnapshotRecord& b) {
+    return equal_record(a, b);
+}
+
+Status load_source_snapshot_record(
+    sqlite3* db,
+    const std::string& source_id,
+    std::optional<SourceSnapshotRecord>& record) {
+    return load_existing(db, source_id, record);
+}
+
+Status insert_source_snapshot_record(
+    sqlite3* db,
+    const SourceSnapshotRecord& record) {
+    return insert_record(db, record);
+}
+
+}  // namespace detail
 
 bool is_canonical_sha256(const std::string_view value) noexcept {
     if (value.size() != 64U) return false;

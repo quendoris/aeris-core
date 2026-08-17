@@ -766,6 +766,70 @@ FeatureGeometryLoadResult load_feature_geometry(
 
 namespace detail {
 
+Status canonicalize_and_validate_source_geometry_record(SourceGeometryRecord& record) {
+    canonicalize_source_geometry(record);
+    return validate_source_geometry(record);
+}
+
+bool equal_source_geometry_records(
+    const SourceGeometryRecord& a,
+    const SourceGeometryRecord& b) {
+    if (a.source_id != b.source_id || a.features.size() != b.features.size()) return false;
+    for (std::size_t index = 0U; index < a.features.size(); ++index) {
+        if (!equal_feature(a.features[index], b.features[index])) return false;
+    }
+    return true;
+}
+
+Status load_source_geometry_record(
+    sqlite3* db,
+    const std::string& source_id,
+    std::optional<SourceGeometryRecord>& record) {
+    std::vector<FeatureGeometryIndexEntry> index;
+    Status status = read_geometry_index(db, source_id, index);
+    if (!status) {
+        if (status.error == StorageError::record_not_found) {
+            record.reset();
+            return Status::success();
+        }
+        return status;
+    }
+
+    SourceGeometryRecord loaded{};
+    loaded.source_id = source_id;
+    loaded.features.reserve(index.size());
+    for (const FeatureGeometryIndexEntry& entry : index) {
+        std::optional<FeatureGeometryRecord> feature;
+        status = load_feature_from_db(db, source_id, entry.stable_id, feature);
+        if (!status) return status;
+        if (!feature.has_value()) {
+            return {StorageError::schema_invalid,
+                    "canonical geometry index references a missing feature"};
+        }
+        if (feature->source_feature_id != entry.source_feature_id ||
+            feature->rings.size() != static_cast<std::size_t>(entry.ring_count)) {
+            return {StorageError::schema_invalid,
+                    "canonical geometry index disagrees with loaded feature"};
+        }
+        loaded.features.push_back(std::move(*feature));
+    }
+
+    canonicalize_source_geometry(loaded);
+    status = validate_source_geometry(loaded);
+    if (!status) {
+        return {StorageError::schema_invalid,
+                "stored source geometry violates canonical bounds: " + status.diagnostic};
+    }
+    record = std::move(loaded);
+    return Status::success();
+}
+
+Status insert_source_geometry_record(
+    sqlite3* db,
+    const SourceGeometryRecord& record) {
+    return insert_geometry(db, record);
+}
+
 Status verify_geometry_semantics(const ProjectStore& project) {
     DbPtr db;
     Status status = open_database(project.path(), SQLITE_OPEN_READONLY, db);
