@@ -35,8 +35,10 @@ struct ProjectResourceIdentity final {
     // may be empty when no network locator is semantically available.
     std::string retrieval_uri;
 
-    // Frozen projects require every resource carrying this flag to be embedded
-    // and hash-verified inside the .aeris file.
+    // Project reproduction state, not immutable content identity. A binding may
+    // monotonically promote an optional resource to required; retries with false
+    // never downgrade it. Frozen projects require every resource carrying this
+    // flag to be embedded and hash-verified inside the .aeris file.
     bool required_for_reproduction{true};
 };
 
@@ -71,8 +73,9 @@ struct ProjectFreezeResult final {
 };
 
 // Records immutable content identity without storing a machine-local path.
-// If an identical embedded resource already exists, this is an idempotent no-op
-// and never downgrades the stronger embedded representation.
+// Re-submitting identical content with required_for_reproduction=true may
+// atomically promote the project-state requirement bit; false never demotes an
+// already-required resource. Existing embedded representation is never downgraded.
 [[nodiscard]] ResourceMutationResult store_external_resource(
     ProjectStore& project,
     const ProjectResourceIdentity& resource,
@@ -81,7 +84,8 @@ struct ProjectFreezeResult final {
 // Streams one local input file into canonical fixed-size SQLite chunks while
 // recomputing both per-chunk and aggregate SHA-256. The input path is an API
 // source only and is never persisted in the project. Existing identical external
-// identity may be upgraded to embedded atomically.
+// content identity may be upgraded to embedded atomically regardless of a prior
+// monotonic required_for_reproduction promotion.
 [[nodiscard]] ResourceMutationResult embed_resource_file(
     ProjectStore& project,
     const ProjectResourceIdentity& resource,
