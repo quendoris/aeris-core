@@ -57,6 +57,7 @@ add_library(aeris_core STATIC
     src/projection/wgs84.cpp
     src/source/acquisition.cpp
     src/source/adapter.cpp
+    src/source/dbf.cpp
     src/source/natural_earth.cpp
     src/source/registry.cpp
     src/source/shapefile.cpp
