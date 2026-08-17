@@ -3,6 +3,7 @@
 #pragma once
 
 #include "aeris/storage/feature_property.hpp"
+#include "aeris/storage/geometry.hpp"
 
 #include <optional>
 
