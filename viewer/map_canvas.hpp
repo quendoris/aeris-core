@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include "layer_stack.hpp"
 #include "scene.hpp"
 #include "unfold.hpp"
 
@@ -22,6 +23,7 @@ public:
 
     void set_scene(SceneData scene);
     void set_busy(bool busy);
+    void set_layer_render_state(LayerRenderState state);
     void set_camera_callback(CameraCallback callback);
     void set_camera(double longitude_deg, double latitude_deg);
 
@@ -45,6 +47,7 @@ private:
 
     SceneData scene_{};
     std::optional<UnfoldBundle> unfold_;
+    LayerRenderState layer_render_state_{};
     double unfold_progress_ = 0.0;
     bool busy_ = false;
     bool dragging_ = false;

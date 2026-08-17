@@ -3,19 +3,31 @@
 
 #include "render_surface.hpp"
 
+#include <QFontMetricsF>
 #include <QPainterPath>
 
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <optional>
+#include <string>
 #include <string_view>
+#include <vector>
 
 namespace aeris::viewer {
 namespace {
 
 constexpr int kMarginPx = 52;
 constexpr double kPi = 3.141592653589793238462643383279502884;
+
+struct LabelCandidate final {
+    QString text;
+    QPointF anchor;
+    QRectF collision_rect;
+    double score{0.0};
+    std::string stable_id;
+};
 
 [[nodiscard]] std::uint64_t stable_hash(const std::string_view value) noexcept {
     std::uint64_t hash = 1469598103934665603ULL;
@@ -58,6 +70,178 @@ constexpr double kPi = 3.141592653589793238462643383279502884;
         path.closeSubpath();
     }
     return path;
+}
+
+[[nodiscard]] double ring_area2(
+    const std::vector<geometry::PlanarPoint>& ring
+) noexcept {
+    if (ring.size() < 3U) return 0.0;
+    double area2 = 0.0;
+    for (std::size_t index = 0U; index < ring.size(); ++index) {
+        const auto& a = ring[index];
+        const auto& b = ring[(index + 1U) % ring.size()];
+        area2 += a.x * b.y - b.x * a.y;
+    }
+    return area2;
+}
+
+[[nodiscard]] std::optional<geometry::PlanarPoint> ring_anchor(
+    const std::vector<geometry::PlanarPoint>& ring
+) noexcept {
+    if (ring.size() < 3U) return std::nullopt;
+
+    const double area2 = ring_area2(ring);
+    if (std::abs(area2) > 1e-12) {
+        double sum_x = 0.0;
+        double sum_y = 0.0;
+        for (std::size_t index = 0U; index < ring.size(); ++index) {
+            const auto& a = ring[index];
+            const auto& b = ring[(index + 1U) % ring.size()];
+            const double cross = a.x * b.y - b.x * a.y;
+            sum_x += (a.x + b.x) * cross;
+            sum_y += (a.y + b.y) * cross;
+        }
+        return geometry::PlanarPoint{
+            sum_x / (3.0 * area2),
+            sum_y / (3.0 * area2),
+        };
+    }
+
+    double min_x = ring.front().x;
+    double max_x = ring.front().x;
+    double min_y = ring.front().y;
+    double max_y = ring.front().y;
+    for (const auto& point : ring) {
+        min_x = std::min(min_x, point.x);
+        max_x = std::max(max_x, point.x);
+        min_y = std::min(min_y, point.y);
+        max_y = std::max(max_y, point.y);
+    }
+    return geometry::PlanarPoint{
+        0.5 * (min_x + max_x),
+        0.5 * (min_y + max_y),
+    };
+}
+
+[[nodiscard]] QRectF ring_device_bounds(
+    const std::vector<geometry::PlanarPoint>& ring,
+    const QTransform& transform
+) {
+    if (ring.empty()) return {};
+    double min_x = ring.front().x;
+    double max_x = ring.front().x;
+    double min_y = ring.front().y;
+    double max_y = ring.front().y;
+    for (const auto& point : ring) {
+        min_x = std::min(min_x, point.x);
+        max_x = std::max(max_x, point.x);
+        min_y = std::min(min_y, point.y);
+        max_y = std::max(max_y, point.y);
+    }
+    const QPointF a = transform.map(QPointF(min_x, min_y));
+    const QPointF b = transform.map(QPointF(max_x, max_y));
+    return QRectF(a, b).normalized();
+}
+
+void draw_country_labels(
+    QPainter& painter,
+    const SceneData& scene
+) {
+    if (!scene.political) return;
+
+    const QTransform world_transform = painter.worldTransform();
+    const QRectF viewport = painter.viewport();
+
+    QFont font = painter.font();
+    font.setPixelSize(scene.mode == ViewMode::globe ? 11 : 12);
+    font.setWeight(QFont::DemiBold);
+    const QFontMetricsF metrics(font);
+
+    std::vector<LabelCandidate> candidates;
+    candidates.reserve(scene.features.size());
+
+    for (const SceneFeature& feature : scene.features) {
+        if (feature.label.empty() || feature.fill_rings.empty()) continue;
+
+        const std::vector<geometry::PlanarPoint>* largest = nullptr;
+        double largest_area = 0.0;
+        for (const auto& ring : feature.fill_rings) {
+            const double area = std::abs(ring_area2(ring));
+            if (area > largest_area) {
+                largest_area = area;
+                largest = &ring;
+            }
+        }
+        if (largest == nullptr) continue;
+
+        const QRectF feature_bounds = ring_device_bounds(*largest, world_transform);
+        if (feature_bounds.width() < 42.0 || feature_bounds.height() < 18.0) continue;
+
+        const auto world_anchor = ring_anchor(*largest);
+        if (!world_anchor) continue;
+        const QPointF anchor = world_transform.map(
+            QPointF(world_anchor->x, world_anchor->y)
+        );
+        if (!viewport.adjusted(8.0, 8.0, -8.0, -8.0).contains(anchor)) continue;
+
+        const QString text = QString::fromStdString(feature.label);
+        const QRectF text_bounds = metrics.boundingRect(text);
+        QRectF collision(
+            anchor.x() - 0.5 * text_bounds.width() - 4.0,
+            anchor.y() - 0.5 * text_bounds.height() - 2.0,
+            text_bounds.width() + 8.0,
+            text_bounds.height() + 4.0
+        );
+        if (!viewport.intersects(collision)) continue;
+
+        candidates.push_back({
+            text,
+            anchor,
+            collision,
+            feature_bounds.width() * feature_bounds.height(),
+            feature.stable_id,
+        });
+    }
+
+    std::sort(
+        candidates.begin(),
+        candidates.end(),
+        [](const LabelCandidate& left, const LabelCandidate& right) {
+            if (left.score != right.score) return left.score > right.score;
+            return left.stable_id < right.stable_id;
+        }
+    );
+
+    painter.save();
+    painter.resetTransform();
+    painter.setFont(font);
+
+    std::vector<QRectF> occupied;
+    occupied.reserve(32U);
+    std::size_t drawn = 0U;
+    for (const LabelCandidate& candidate : candidates) {
+        if (drawn >= 30U) break;
+        const bool collides = std::any_of(
+            occupied.begin(),
+            occupied.end(),
+            [&](const QRectF& used) {
+                return used.adjusted(-3.0, -2.0, 3.0, 2.0)
+                    .intersects(candidate.collision_rect);
+            }
+        );
+        if (collides) continue;
+
+        const QRectF text_rect = candidate.collision_rect.adjusted(4.0, 2.0, -4.0, -2.0);
+        painter.setPen(QColor(19, 21, 24, 220));
+        painter.drawText(text_rect.translated(1.0, 1.0), Qt::AlignCenter, candidate.text);
+        painter.setPen(QColor(239, 240, 235, 238));
+        painter.drawText(text_rect, Qt::AlignCenter, candidate.text);
+
+        occupied.push_back(candidate.collision_rect);
+        ++drawn;
+    }
+
+    painter.restore();
 }
 
 }  // namespace
@@ -104,7 +288,8 @@ void apply_world_transform(
 void draw_scene_geometry(
     QPainter& painter,
     const SceneData& scene,
-    const double opacity
+    const double opacity,
+    const LayerRenderState& layers
 ) {
     if (opacity <= 0.0) return;
 
@@ -117,30 +302,34 @@ void draw_scene_geometry(
         painter.drawEllipse(QPointF(0.0, 0.0), scene.globe_radius_m, scene.globe_radius_m);
     }
 
-    painter.setPen(Qt::NoPen);
-    for (const SceneFeature& feature : scene.features) {
-        if (feature.fill_rings.empty()) continue;
-        painter.setBrush(scene.political ? political_fill(feature) : QColor(197, 198, 188));
-        painter.drawPath(fill_path(feature));
+    if (layers.fill_visible) {
+        painter.setPen(Qt::NoPen);
+        for (const SceneFeature& feature : scene.features) {
+            if (feature.fill_rings.empty()) continue;
+            painter.setBrush(scene.political ? political_fill(feature) : QColor(197, 198, 188));
+            painter.drawPath(fill_path(feature));
+        }
     }
 
-    QPen outline(scene.political ? QColor(41, 44, 48, 225) : QColor(230, 231, 226));
-    outline.setWidthF(scene.political ? 0.85 : 1.0);
-    outline.setCosmetic(true);
-    outline.setJoinStyle(Qt::RoundJoin);
-    outline.setCapStyle(Qt::RoundCap);
-    painter.setPen(outline);
-    painter.setBrush(Qt::NoBrush);
-    for (const SceneFeature& feature : scene.features) {
-        for (const auto& line : feature.outlines) {
-            if (line.size() < 2U) continue;
-            QPainterPath path;
-            path.moveTo(line.front().x, line.front().y);
-            for (std::size_t index = 1U; index < line.size(); ++index) {
-                path.lineTo(line[index].x, line[index].y);
+    if (layers.outline_visible) {
+        QPen outline(scene.political ? QColor(41, 44, 48, 225) : QColor(230, 231, 226));
+        outline.setWidthF(scene.political ? 0.85 : 1.0);
+        outline.setCosmetic(true);
+        outline.setJoinStyle(Qt::RoundJoin);
+        outline.setCapStyle(Qt::RoundCap);
+        painter.setPen(outline);
+        painter.setBrush(Qt::NoBrush);
+        for (const SceneFeature& feature : scene.features) {
+            for (const auto& line : feature.outlines) {
+                if (line.size() < 2U) continue;
+                QPainterPath path;
+                path.moveTo(line.front().x, line.front().y);
+                for (std::size_t index = 1U; index < line.size(); ++index) {
+                    path.lineTo(line[index].x, line[index].y);
+                }
+                if (scene.mode != ViewMode::globe && line.size() >= 3U) path.closeSubpath();
+                painter.drawPath(path);
             }
-            if (scene.mode != ViewMode::globe && line.size() >= 3U) path.closeSubpath();
-            painter.drawPath(path);
         }
     }
 
@@ -152,6 +341,8 @@ void draw_scene_geometry(
         painter.setBrush(Qt::NoBrush);
         painter.drawEllipse(QPointF(0.0, 0.0), scene.globe_radius_m, scene.globe_radius_m);
     }
+
+    if (layers.labels_visible) draw_country_labels(painter, scene);
 
     painter.restore();
 }

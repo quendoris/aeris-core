@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include "layer_stack.hpp"
 #include "scene.hpp"
 #include "unfold.hpp"
 
@@ -33,7 +34,11 @@ void apply_world_transform(
     double zoom
 );
 
-void draw_scene_geometry(QPainter& painter, const SceneData& scene, double opacity);
+void draw_scene_geometry(
+    QPainter& painter,
+    const SceneData& scene,
+    double opacity,
+    const LayerRenderState& layers);
 void draw_unfold_guides(QPainter& painter, const UnfoldBundle& bundle, double progress);
 [[nodiscard]] QString scene_caption(const SceneData& scene);
 
