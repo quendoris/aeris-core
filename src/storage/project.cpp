@@ -6,6 +6,7 @@
 #include "layer_detail.hpp"
 #include "resource_detail.hpp"
 #include "sqlite_detail.hpp"
+#include "style_detail.hpp"
 
 #include <array>
 #include <limits>
@@ -173,7 +174,11 @@ Status validate_schema_surface(sqlite3* db) {
              "SELECT resource_id,chunk_index,sha256,payload FROM aeris_resource_chunk LIMIT 0;",
              "SELECT layer_id,role_id,name,ordinal,visible FROM aeris_layer LIMIT 0;",
              "SELECT layer_id,slot_id,source_id FROM aeris_layer_source LIMIT 0;",
-             "SELECT layer_id,slot_id,resource_id FROM aeris_layer_resource LIMIT 0;"}) {
+             "SELECT layer_id,slot_id,resource_id FROM aeris_layer_resource LIMIT 0;",
+             "SELECT style_id,model_id,name,parent_style_id FROM aeris_style LIMIT 0;",
+             "SELECT style_id,property_key,value_type_id,value_payload FROM aeris_style_property LIMIT 0;",
+             "SELECT style_id,slot_id,resource_id FROM aeris_style_resource LIMIT 0;",
+             "SELECT layer_id,slot_id,style_id FROM aeris_layer_style LIMIT 0;"}) {
         detail::StmtPtr stmt;
         Status status = detail::prepare(db, sql, stmt);
         if (!status) {
@@ -402,7 +407,7 @@ ProjectStoreResult ProjectStore::create(
 
     const char* schema =
         "PRAGMA application_id=1095062089;"
-        "PRAGMA user_version=5;"
+        "PRAGMA user_version=6;"
         "CREATE TABLE aeris_meta("
         "id INTEGER PRIMARY KEY CHECK(id=1),"
         "project_uuid TEXT NOT NULL,"
@@ -485,6 +490,25 @@ ProjectStoreResult ProjectStore::create(
         "payload BLOB NOT NULL CHECK(length(payload)>0 AND length(payload)<=1048576),"
         "PRIMARY KEY(resource_id,chunk_index)"
         ");"
+        "CREATE TABLE aeris_style("
+        "style_id TEXT PRIMARY KEY,"
+        "model_id TEXT NOT NULL,"
+        "name TEXT NOT NULL,"
+        "parent_style_id TEXT REFERENCES aeris_style(style_id)"
+        ");"
+        "CREATE TABLE aeris_style_property("
+        "style_id TEXT NOT NULL REFERENCES aeris_style(style_id) ON DELETE CASCADE,"
+        "property_key TEXT NOT NULL,"
+        "value_type_id TEXT NOT NULL,"
+        "value_payload BLOB NOT NULL CHECK(length(value_payload)<=1048576),"
+        "PRIMARY KEY(style_id,property_key)"
+        ");"
+        "CREATE TABLE aeris_style_resource("
+        "style_id TEXT NOT NULL REFERENCES aeris_style(style_id) ON DELETE CASCADE,"
+        "slot_id TEXT NOT NULL,"
+        "resource_id TEXT NOT NULL REFERENCES aeris_resource(resource_id),"
+        "PRIMARY KEY(style_id,slot_id)"
+        ");"
         "CREATE TABLE aeris_layer("
         "layer_id TEXT PRIMARY KEY,"
         "role_id TEXT NOT NULL,"
@@ -502,6 +526,12 @@ ProjectStoreResult ProjectStore::create(
         "layer_id TEXT NOT NULL REFERENCES aeris_layer(layer_id) ON DELETE CASCADE,"
         "slot_id TEXT NOT NULL,"
         "resource_id TEXT NOT NULL REFERENCES aeris_resource(resource_id),"
+        "PRIMARY KEY(layer_id,slot_id)"
+        ");"
+        "CREATE TABLE aeris_layer_style("
+        "layer_id TEXT NOT NULL REFERENCES aeris_layer(layer_id) ON DELETE CASCADE,"
+        "slot_id TEXT NOT NULL,"
+        "style_id TEXT NOT NULL REFERENCES aeris_style(style_id),"
         "PRIMARY KEY(layer_id,slot_id)"
         ");";
     status = detail::exec(staged_db.get(), schema);
@@ -701,7 +731,8 @@ Status ProjectStore::verify_integrity() const {
     if (!(status = validate_frozen_claim(impl_->db.get(), metadata))) return status;
     if (!(status = detail::verify_geometry_semantics(*this))) return status;
     if (!(status = detail::verify_resource_semantics(*this))) return status;
-    return detail::verify_layer_semantics(*this);
+    if (!(status = detail::verify_layer_semantics(*this))) return status;
+    return detail::verify_style_semantics(*this);
 }
 
 }  // namespace aeris::storage
