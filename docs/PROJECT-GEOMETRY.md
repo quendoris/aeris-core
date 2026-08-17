@@ -58,7 +58,7 @@ feature_count
 The marker is semantic. In particular:
 
 ```text
-no marker       = geometry has not been recorded for this source
+no marker        = geometry has not been recorded for this source
 marker + count 0 = geometry was explicitly recorded and is empty
 ```
 
@@ -193,16 +193,29 @@ A different geometry set under the same source ID fails with `record_exists`; it
 
 The geometry mutation requires the immutable source provenance parent to exist first. This storage-level API is intentionally lower-level than the future product ingestion transaction.
 
-## 11. Read path
+## 11. Fast open, read path, and deep audit
 
-Two read surfaces are currently exposed:
+`ProjectStore::open()` deliberately does **not** decode every coordinate in the project. Open-time acceptance checks SQLite quick integrity, AERIS identity, exact draft generation, canonical metadata, required table/column surfaces, and foreign-key integrity before writable durability PRAGMAs are configured.
+
+That makes ordinary project open independent of total vertex count except for SQLite's own structural checks.
+
+Two read surfaces are exposed for normal geometry access:
 
 - a metadata-only source geometry index, used to enumerate stable feature identities and ring counts without decoding all coordinates;
 - lazy loading of one feature's complete canonical ring geometry.
 
-Both use read-only SQLite connections and validate model, encoding, numeric types, bounds and topology before returning records.
+Both use read-only SQLite connections and validate model, encoding, numeric types, bounds and topology before returning records. The conformance suite checks that ordinary index/load reads do not rewrite project bytes.
 
-The conformance suite checks that ordinary index/load reads do not rewrite project bytes.
+`ProjectStore::verify_integrity()` is intentionally stronger and potentially expensive. After the container/schema checks, it opens one read-only audit connection and performs a full semantic scan of every recorded geometry marker, feature and ring using the same coordinate decoder and canonical validators used by lazy loading.
+
+This distinction is deliberate:
+
+```text
+open()             = fast structural acceptance
+verify_integrity() = explicit full semantic audit
+```
+
+A future UI may run the deep audit as a cancellable/progress-reporting job; its cost must not be hidden inside normal Open.
 
 ## 12. Hostile-file semantics
 
@@ -214,7 +227,7 @@ Test fixtures deliberately create SQLite-structurally readable projects and then
 - sparse ring indices;
 - a NaN injected into an otherwise length-correct coordinate BLOB.
 
-Canonical geometry readers must reject these as schema-invalid data.
+Those files are intentionally allowed to pass the fast container `open()` when their SQLite structure remains valid. Both the relevant lazy geometry reader and the explicit deep `verify_integrity()` audit must reject the corrupted semantic payload as schema-invalid data.
 
 ## 13. Current non-claims
 
