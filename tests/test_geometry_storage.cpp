@@ -134,15 +134,15 @@ int main() {
     options.timestamp_utc = "2026-08-17T08:09:00Z";
     options.project_uuid = "12345678-1234-4abc-8def-1234567890ab";
     options.producer = "aeris-geometry-test";
-    options.producer_version = "0.3-test";
+    options.producer_version = "0.4-test";
 
     auto created = ProjectStore::create(project_path, options);
-    expect(created.ok(), "draft 0.3 project should create");
+    expect(created.ok(), "draft 0.4 project should create");
     if (!created.ok()) {
         std::cerr << created.status.diagnostic << '\n';
         return EXIT_FAILURE;
     }
-    expect(created.store->metadata().format_minor == 3, "draft format minor should be 3");
+    expect(created.store->metadata().format_minor == 4, "draft format minor should be 4");
     expect(created.store->metadata().revision == 0U, "new geometry project revision should begin at zero");
 
     auto source = provenance_record("world.land.primary", "snapshot-1");

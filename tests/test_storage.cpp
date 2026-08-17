@@ -80,7 +80,14 @@ int main() {
     expect(created.store->metadata().project_uuid == uuid, "project UUID should match explicit create identity");
     expect(created.store->metadata().revision == 0U, "new project revision should be zero");
     expect(created.store->metadata().projection_id == "aeris.projection.unspecified", "new project projection should be explicit unspecified value");
+    expect(!created.store->metadata().frozen, "new project should begin unfrozen until the resource contract verifies portability");
     expect(created.store->verify_integrity().ok(), "new project should pass integrity verification");
+
+    ProjectCreateOptions illegal_frozen_create = create_options;
+    illegal_frozen_create.timestamp_utc = "2026-08-16T18:10:00Z";
+    illegal_frozen_create.frozen = true;
+    auto frozen_create = ProjectStore::create(root / "illegal-frozen.aeris", illegal_frozen_create);
+    expect_error(frozen_create.status, StorageError::invalid_argument, "creation must not assert unverified frozen state");
 
     auto duplicate = ProjectStore::create(project_path, create_options);
     expect_error(duplicate.status, StorageError::path_exists, "project create must refuse overwrite at atomic publish step");
@@ -91,11 +98,17 @@ int main() {
     update.modified_utc = "2026-08-16T18:10:01Z";
     update.projection_id = "aeris.projection.mollweide.v1";
     update.worldview_id = "neutral-disputed";
-    update.frozen = true;
     Status status = created.store->update_metadata(update);
     expect(status.ok(), "acknowledged project mutation should commit");
     expect(created.store->metadata().revision == 1U, "acknowledged project mutation should increment revision exactly once");
-    expect(created.store->metadata().frozen, "project mutation should update frozen marker");
+    expect(!created.store->metadata().frozen, "ordinary metadata mutation should not invent frozen state");
+
+    ProjectMetadataUpdate forbidden_freeze;
+    forbidden_freeze.modified_utc = "2026-08-16T18:10:01Z";
+    forbidden_freeze.frozen = true;
+    status = created.store->update_metadata(forbidden_freeze);
+    expect_error(status, StorageError::invalid_argument, "metadata API must reject direct frozen mutation");
+    expect(created.store->metadata().revision == 1U, "rejected direct frozen mutation must not advance revision");
 
     created.store.reset();
     auto reopened = ProjectStore::open(project_path);
@@ -107,7 +120,7 @@ int main() {
     expect(reopened.store->metadata().revision == 1U, "committed project revision should survive reopen");
     expect(reopened.store->metadata().projection_id == "aeris.projection.mollweide.v1", "committed projection should survive reopen");
     expect(reopened.store->metadata().worldview_id == "neutral-disputed", "committed worldview should survive reopen");
-    expect(reopened.store->metadata().frozen, "committed frozen flag should survive reopen");
+    expect(!reopened.store->metadata().frozen, "unfrozen state should survive reopen");
 
     auto session = SessionStore::open_or_create(*reopened.store, "2026-08-16T18:10:02Z");
     expect(session.ok(), "adjacent session should create from the validated project identity");

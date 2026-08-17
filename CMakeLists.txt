@@ -8,8 +8,7 @@ option(AERIS_BUILD_TESTS "Build AERIS tests" ON)
 option(AERIS_BUILD_TOOLS "Build AERIS development tools" ON)
 # Storage remains an opt-in native layer: SQLite is private to AERIS::storage,
 # and canonical project geometry remains a storage-native DTO/encoding rather
-# than a dependency on the in-memory source or rendering model. This root-level
-# boundary is also the final same-SHA checkpoint for draft-0.3 geometry CI.
+# than a dependency on the in-memory source or rendering model.
 option(AERIS_BUILD_STORAGE "Build SQLite-backed AERIS project/session storage" OFF)
 # Project orchestration is the explicit verified composition layer over core/source + storage.
 # Enabling it must never make SQLite a dependency of AERIS::core itself; configure and
@@ -34,6 +33,17 @@ function(aeris_enable_warnings target_name)
     endif()
 endfunction()
 
+# SHA-256 is a small runtime-neutral support primitive shared by source
+# acquisition and durable project resources. Keeping it outside aeris_core lets
+# AERIS::storage verify embedded bytes without acquiring a dependency on the
+# cartographic core.
+add_library(aeris_hash STATIC src/util/sha256.cpp)
+add_library(AERIS::hash ALIAS aeris_hash)
+target_include_directories(aeris_hash PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include> $<INSTALL_INTERFACE:include>)
+target_compile_features(aeris_hash PUBLIC cxx_std_17)
+set_target_properties(aeris_hash PROPERTIES CXX_EXTENSIONS OFF POSITION_INDEPENDENT_CODE ON)
+aeris_enable_warnings(aeris_hash)
+
 add_library(aeris_core STATIC
     src/geo/rotation.cpp
     src/geo/wgs84.cpp
@@ -50,7 +60,6 @@ add_library(aeris_core STATIC
     src/source/natural_earth.cpp
     src/source/registry.cpp
     src/source/shapefile.cpp
-    src/util/sha256.cpp
     src/view/globe.cpp
     src/view/globe_curve.cpp
     src/view/globe_polygon.cpp
@@ -60,6 +69,7 @@ add_library(AERIS::core ALIAS aeris_core)
 target_include_directories(aeris_core PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include> $<INSTALL_INTERFACE:include>)
 target_compile_features(aeris_core PUBLIC cxx_std_17)
 set_target_properties(aeris_core PROPERTIES CXX_EXTENSIONS OFF POSITION_INDEPENDENT_CODE ON)
+target_link_libraries(aeris_core PUBLIC AERIS::hash)
 aeris_enable_warnings(aeris_core)
 
 if(AERIS_BUILD_STORAGE)
@@ -82,6 +92,7 @@ if(AERIS_BUILD_STORAGE)
         src/storage/provenance.cpp
         src/storage/geometry.cpp
         src/storage/dataset.cpp
+        src/storage/resource.cpp
     )
     add_library(AERIS::storage ALIAS aeris_storage)
     target_include_directories(aeris_storage
@@ -90,7 +101,7 @@ if(AERIS_BUILD_STORAGE)
     )
     target_compile_features(aeris_storage PUBLIC cxx_std_17)
     set_target_properties(aeris_storage PROPERTIES CXX_EXTENSIONS OFF POSITION_INDEPENDENT_CODE ON)
-    target_link_libraries(aeris_storage PRIVATE ${AERIS_SQLITE_TARGET})
+    target_link_libraries(aeris_storage PRIVATE ${AERIS_SQLITE_TARGET} AERIS::hash)
     aeris_enable_warnings(aeris_storage)
 endif()
 
