@@ -4,6 +4,7 @@
 
 #include "geometry_detail.hpp"
 #include "layer_detail.hpp"
+#include "projection_detail.hpp"
 #include "resource_detail.hpp"
 #include "sqlite_detail.hpp"
 #include "style_detail.hpp"
@@ -20,6 +21,7 @@ namespace {
 
 constexpr std::size_t kMaxMetadataText = 255U;
 constexpr int kStagingDirectoryAttempts = 8;
+constexpr std::string_view kUnspecifiedProjectionId = "aeris.projection.unspecified";
 
 bool is_hex(const char c) noexcept {
     return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
@@ -113,6 +115,10 @@ Status validate_create_options(const ProjectCreateOptions& options) {
         return {StorageError::invalid_argument,
                 "project metadata identifiers must be non-empty, NUL-free, and at most 255 bytes"};
     }
+    if (options.projection_id != kUnspecifiedProjectionId) {
+        return {StorageError::invalid_argument,
+                "project creation accepts only explicit unspecified projection; use set_project_projection() for structured projection state"};
+    }
     if (options.frozen) {
         return {StorageError::invalid_argument,
                 "project creation cannot assert frozen state; create first and use verified freeze_project()"};
@@ -125,9 +131,9 @@ Status validate_metadata_update(const ProjectMetadataUpdate& update) {
         return {StorageError::invalid_argument,
                 "project mutation timestamp must be canonical UTC YYYY-MM-DDTHH:MM:SSZ"};
     }
-    if (update.projection_id && !valid_small_text(*update.projection_id)) {
+    if (update.projection_id.has_value()) {
         return {StorageError::invalid_argument,
-                "projection identifier must be non-empty, NUL-free, and at most 255 bytes"};
+                "projection is structured project state and must be changed with set_project_projection()"};
     }
     if (update.worldview_id && !valid_small_text(*update.worldview_id)) {
         return {StorageError::invalid_argument,
@@ -137,7 +143,7 @@ Status validate_metadata_update(const ProjectMetadataUpdate& update) {
         return {StorageError::invalid_argument,
                 "frozen is a verified resource-state invariant and cannot be changed through metadata update"};
     }
-    if (!update.projection_id && !update.worldview_id) {
+    if (!update.worldview_id) {
         return {StorageError::invalid_argument,
                 "metadata update contains no acknowledged project mutation"};
     }
@@ -170,6 +176,7 @@ Status validate_schema_surface(sqlite3* db) {
              "SELECT source_id,model_id,encoding_id,feature_count FROM aeris_source_geometry LIMIT 0;",
              "SELECT source_id,stable_id,source_feature_id,ring_count FROM aeris_feature LIMIT 0;",
              "SELECT source_id,stable_id,ring_index,role,interior_side,longitude_winding,closing_longitude_f64le,vertex_count,vertices_f64le FROM aeris_feature_ring LIMIT 0;",
+             "SELECT id,model_id,central_meridian_f64le,cut_model_id FROM aeris_projection LIMIT 0;",
              "SELECT resource_id,sha256,media_type,size_bytes,storage_mode,retrieval_uri,required_for_reproduction,chunk_count FROM aeris_resource LIMIT 0;",
              "SELECT resource_id,chunk_index,sha256,payload FROM aeris_resource_chunk LIMIT 0;",
              "SELECT layer_id,role_id,name,ordinal,visible FROM aeris_layer LIMIT 0;",
@@ -407,7 +414,7 @@ ProjectStoreResult ProjectStore::create(
 
     const char* schema =
         "PRAGMA application_id=1095062089;"
-        "PRAGMA user_version=6;"
+        "PRAGMA user_version=7;"
         "CREATE TABLE aeris_meta("
         "id INTEGER PRIMARY KEY CHECK(id=1),"
         "project_uuid TEXT NOT NULL,"
@@ -422,6 +429,14 @@ ProjectStoreResult ProjectStore::create(
         "worldview_id TEXT NOT NULL,"
         "frozen INTEGER NOT NULL CHECK(frozen IN (0,1))"
         ");"
+        "CREATE TABLE aeris_projection("
+        "id INTEGER PRIMARY KEY CHECK(id=1),"
+        "model_id TEXT NOT NULL,"
+        "central_meridian_f64le BLOB NOT NULL CHECK(length(central_meridian_f64le)=8),"
+        "cut_model_id TEXT NOT NULL"
+        ");"
+        "INSERT INTO aeris_projection(id,model_id,central_meridian_f64le,cut_model_id) "
+        "VALUES(1,'aeris.projection.unspecified',X'0000000000000000','aeris.cut.unspecified.v1');"
         "CREATE TABLE aeris_source("
         "source_id TEXT PRIMARY KEY,"
         "adapter_id TEXT NOT NULL,"
@@ -638,7 +653,11 @@ ProjectStoreResult ProjectStore::open(const std::filesystem::path& path) {
     if (!(status = validate_frozen_claim(impl->db.get(), impl->metadata))) return {std::move(status), nullptr};
     if (!(status = detail::configure_durable(impl->db.get()))) return {std::move(status), nullptr};
 
-    return {Status::success(), std::unique_ptr<ProjectStore>(new ProjectStore(std::move(impl)))};
+    auto store = std::unique_ptr<ProjectStore>(new ProjectStore(std::move(impl)));
+    if (!(status = detail::verify_projection_semantics(*store))) {
+        return {std::move(status), nullptr};
+    }
+    return {Status::success(), std::move(store)};
 }
 
 const ProjectMetadata& ProjectStore::metadata() const noexcept { return impl_->metadata; }
@@ -653,6 +672,7 @@ Status ProjectStore::refresh_metadata() {
                 "project UUID changed while the project handle was open"};
     }
     if (!(status = validate_frozen_claim(impl_->db.get(), current))) return status;
+    if (!(status = detail::verify_projection_semantics(*this))) return status;
     impl_->metadata = std::move(current);
     return Status::success();
 }
@@ -660,6 +680,7 @@ Status ProjectStore::refresh_metadata() {
 Status ProjectStore::update_metadata(const ProjectMetadataUpdate& update) {
     Status status = validate_metadata_update(update);
     if (!status) return status;
+    if (!(status = detail::verify_projection_semantics(*this))) return status;
     if (!(status = detail::begin_immediate(impl_->db.get()))) return status;
 
     ProjectMetadata current;
@@ -680,14 +701,13 @@ Status ProjectStore::update_metadata(const ProjectMetadataUpdate& update) {
                 "project revision exhausted signed SQLite integer range"};
     }
 
-    const std::string projection = update.projection_id.value_or(current.projection_id);
-    const std::string worldview = update.worldview_id.value_or(current.worldview_id);
+    const std::string worldview = *update.worldview_id;
     const std::uint64_t next_revision = current.revision + 1U;
 
     detail::StmtPtr stmt;
     status = detail::prepare(
         impl_->db.get(),
-        "UPDATE aeris_meta SET revision=?,modified_utc=?,projection_id=?,worldview_id=? "
+        "UPDATE aeris_meta SET revision=?,modified_utc=?,worldview_id=? "
         "WHERE id=1 AND project_uuid=?;",
         stmt);
     if (status) {
@@ -695,9 +715,8 @@ Status ProjectStore::update_metadata(const ProjectMetadataUpdate& update) {
             impl_->db.get(), stmt.get(), 1, static_cast<sqlite3_int64>(next_revision));
     }
     if (status) status = detail::bind_text(impl_->db.get(), stmt.get(), 2, update.modified_utc);
-    if (status) status = detail::bind_text(impl_->db.get(), stmt.get(), 3, projection);
-    if (status) status = detail::bind_text(impl_->db.get(), stmt.get(), 4, worldview);
-    if (status) status = detail::bind_text(impl_->db.get(), stmt.get(), 5, current.project_uuid);
+    if (status) status = detail::bind_text(impl_->db.get(), stmt.get(), 3, worldview);
+    if (status) status = detail::bind_text(impl_->db.get(), stmt.get(), 4, current.project_uuid);
     if (status) status = detail::step_done(impl_->db.get(), stmt.get());
     if (status && sqlite3_changes(impl_->db.get()) != 1) {
         status = {StorageError::schema_invalid,
@@ -715,7 +734,6 @@ Status ProjectStore::update_metadata(const ProjectMetadataUpdate& update) {
 
     current.revision = next_revision;
     current.modified_utc = update.modified_utc;
-    current.projection_id = projection;
     current.worldview_id = worldview;
     impl_->metadata = std::move(current);
     return Status::success();
@@ -729,6 +747,7 @@ Status ProjectStore::verify_integrity() const {
     if (!(status = load_metadata(impl_->db.get(), metadata))) return status;
     if (!(status = validate_schema_surface(impl_->db.get()))) return status;
     if (!(status = validate_frozen_claim(impl_->db.get(), metadata))) return status;
+    if (!(status = detail::verify_projection_semantics(*this))) return status;
     if (!(status = detail::verify_geometry_semantics(*this))) return status;
     if (!(status = detail::verify_resource_semantics(*this))) return status;
     if (!(status = detail::verify_layer_semantics(*this))) return status;
