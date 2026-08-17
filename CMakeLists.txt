@@ -7,9 +7,8 @@ project(aeris VERSION 0.1.0 DESCRIPTION "Authalic Equal-area Rendering & Ingesti
 option(AERIS_BUILD_TESTS "Build AERIS tests" ON)
 option(AERIS_BUILD_TOOLS "Build AERIS development tools" ON)
 # Storage remains an opt-in native layer: SQLite is private to AERIS::storage,
-# and canonical project geometry remains a storage-native DTO/encoding rather
-# than a dependency on the in-memory source or rendering model. This root-level
-# boundary is also the final same-SHA checkpoint for draft-0.3 geometry CI.
+# while atomic dataset ingestion composes storage-native provenance + geometry
+# records without exposing SQLite to core/source/project callers.
 option(AERIS_BUILD_STORAGE "Build SQLite-backed AERIS project/session storage" OFF)
 # Project orchestration is the explicit verified composition layer over core/source + storage.
 # Enabling it must never make SQLite a dependency of AERIS::core itself; configure and
@@ -81,6 +80,7 @@ if(AERIS_BUILD_STORAGE)
         src/storage/session.cpp
         src/storage/provenance.cpp
         src/storage/geometry.cpp
+        src/storage/dataset.cpp
     )
     add_library(AERIS::storage ALIAS aeris_storage)
     target_include_directories(aeris_storage
