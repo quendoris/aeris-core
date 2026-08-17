@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 #include "aeris/project/source_bridge.hpp"
+#include "aeris/storage/geometry.hpp"
 #include "aeris/storage/provenance.hpp"
 #include "aeris/util/sha256.hpp"
 
@@ -117,13 +118,16 @@ public:
         result.provenance.retrieved_at_utc = snapshot.manifest().retrieved_at_utc;
         result.provenance.worldview = request.worldview;
 
+        aeris::geometry::LinearRing ring{};
+        ring.vertices = {{-0.1, -0.1}, {0.1, -0.1}, {0.1, 0.1}, {-0.1, 0.1}};
+        ring.closing_longitude_rad = -0.1;
+        ring.longitude_winding = 0;
+        ring.interior_side = aeris::geometry::RingInteriorSide::left;
+
         aeris::source::Feature feature{};
         feature.stable_id = "bridge-feature";
         feature.source_id = "fixture-record";
-        feature.rings.push_back({
-            aeris::geometry::LinearRing{{{-0.1, -0.1}, {0.1, -0.1}, {0.1, 0.1}, {-0.1, 0.1}}},
-            aeris::source::RingRole::exterior
-        });
+        feature.rings.push_back({std::move(ring), aeris::source::RingRole::exterior});
         result.features.push_back(std::move(feature));
         return result;
     }
@@ -175,6 +179,38 @@ private:
     return request;
 }
 
+void expect_geometry_round_trip(
+    aeris::storage::ProjectStore& project,
+    const std::string_view prefix) {
+    const auto index = aeris::storage::list_source_geometry_index(project, "world.land.primary");
+    expect_true(std::string(prefix) + " geometry index lists", index.ok());
+    expect_true(std::string(prefix) + " geometry feature count", index.features.size() == 1U);
+    if (!index.ok() || index.features.size() != 1U) return;
+
+    const auto& entry = index.features.front();
+    expect_true(std::string(prefix) + " stable feature id", entry.stable_id == "bridge-feature");
+    expect_true(std::string(prefix) + " source feature id", entry.source_feature_id == "fixture-record");
+    expect_true(std::string(prefix) + " ring count", entry.ring_count == 1U);
+
+    const auto feature = aeris::storage::load_feature_geometry(
+        project, "world.land.primary", "bridge-feature");
+    expect_true(std::string(prefix) + " geometry feature loads", feature.ok());
+    if (!feature.ok()) return;
+    expect_true(std::string(prefix) + " loaded ring count", feature.feature->rings.size() == 1U);
+    if (feature.feature->rings.size() == 1U) {
+        const auto& ring = feature.feature->rings.front();
+        expect_true(std::string(prefix) + " loaded vertex count", ring.vertices.size() == 4U);
+        expect_true(
+            std::string(prefix) + " loaded topology side",
+            ring.interior_side == aeris::storage::StoredInteriorSide::left
+        );
+        expect_true(
+            std::string(prefix) + " loaded closing longitude",
+            ring.closing_longitude_rad == -0.1
+        );
+    }
+}
+
 void test_verified_snapshot_persists_and_retries_idempotently() {
     TempSnapshot snapshot_fixture{};
     TempProject project_fixture{};
@@ -192,10 +228,10 @@ void test_verified_snapshot_persists_and_retries_idempotently() {
 
     const auto request = valid_request(*snapshot);
     const auto first = aeris::project::record_verified_source_snapshot(*project, registry, *snapshot, request);
-    expect_true("verified source bridge succeeds", first.ok());
-    expect_true("verified source inserted", first.inserted);
-    expect_true("verified source committed", first.durably_committed);
-    expect_true("source mutation advances one project revision", project->metadata().revision == 1U);
+    expect_true("verified source dataset bridge succeeds", first.ok());
+    expect_true("verified source dataset inserted", first.inserted);
+    expect_true("verified source dataset committed", first.durably_committed);
+    expect_true("full dataset advances exactly one project revision", project->metadata().revision == 1U);
 
     const auto listed = aeris::storage::list_source_snapshots(*project);
     expect_true("stored source lists", listed.ok());
@@ -224,12 +260,13 @@ void test_verified_snapshot_persists_and_retries_idempotently() {
             expect_true("omitted manifest size remains omitted", !record.resources[1].size_bytes.has_value());
         }
     }
+    expect_geometry_round_trip(*project, "stored");
 
     const auto retry = aeris::project::record_verified_source_snapshot(*project, registry, *snapshot, request);
-    expect_true("exact verified retry succeeds", retry.ok());
-    expect_true("exact verified retry does not reinsert", !retry.inserted);
-    expect_true("exact verified retry does not recommit", !retry.durably_committed);
-    expect_true("exact verified retry keeps revision", project->metadata().revision == 1U);
+    expect_true("exact verified dataset retry succeeds", retry.ok());
+    expect_true("exact verified dataset retry does not reinsert", !retry.inserted);
+    expect_true("exact verified dataset retry does not recommit", !retry.durably_committed);
+    expect_true("exact verified dataset retry keeps revision", project->metadata().revision == 1U);
 
     const auto project_path = project->path();
     project_fixture.close();
@@ -239,6 +276,7 @@ void test_verified_snapshot_persists_and_retries_idempotently() {
     if (reopened.ok()) {
         const auto reopened_list = aeris::storage::list_source_snapshots(*reopened.store);
         expect_true("reopened provenance lists", reopened_list.ok() && reopened_list.records.size() == 1U);
+        expect_geometry_round_trip(*reopened.store, "reopened");
     }
 }
 
@@ -266,6 +304,11 @@ void test_registry_rejection_is_fail_closed() {
     expect_true("registry rejection leaves revision zero", project->metadata().revision == 0U);
     const auto listed = aeris::storage::list_source_snapshots(*project);
     expect_true("registry rejection stores nothing", listed.ok() && listed.records.empty());
+    const auto geometry = aeris::storage::list_source_geometry_index(*project, "world.land.primary");
+    expect_true(
+        "registry rejection stores no geometry marker",
+        geometry.status.error == aeris::storage::StorageError::record_not_found
+    );
 }
 
 void test_manifest_cross_check_rejects_adapter_drift() {

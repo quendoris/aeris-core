@@ -64,6 +64,15 @@ if(TARGET aeris_storage)
     # storage API, so it links the same private SQLite dependency explicitly.
     target_link_libraries(aeris_test_geometry_corruption PRIVATE ${AERIS_SQLITE_TARGET})
 
+    aeris_add_storage_test(
+        aeris_test_dataset_atomicity
+        test_dataset_atomicity.cpp
+        project_storage_dataset_atomicity
+    )
+    # The rollback proof installs a SQLite trigger below the public storage API
+    # to force a failure precisely between provenance and geometry insertion.
+    target_link_libraries(aeris_test_dataset_atomicity PRIVATE ${AERIS_SQLITE_TARGET})
+
     add_executable(aeris_storage_abrupt storage_abrupt.cpp)
     target_link_libraries(aeris_storage_abrupt PRIVATE AERIS::storage)
     target_compile_features(aeris_storage_abrupt PRIVATE cxx_std_17)
