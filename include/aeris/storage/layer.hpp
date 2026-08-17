@@ -15,6 +15,21 @@ namespace aeris::storage {
 inline constexpr std::size_t kMaxProjectLayers = 65535U;
 inline constexpr std::size_t kMaxLayerBindings = 256U;
 
+// Built-in presentation roles are semantic IDs, not renderer class names. They
+// are suitable for ProjectLayerRecord::role_id and remain independent of Qt or
+// any particular frontend. Pre-1.0 additions may still evolve, but one role ID
+// always denotes one meaning within a given draft generation.
+inline constexpr std::string_view kLayerRolePhysicalLandFillV1 =
+    "aeris.layer.physical.land-fill.v1";
+inline constexpr std::string_view kLayerRolePhysicalCoastlineV1 =
+    "aeris.layer.physical.coastline.v1";
+inline constexpr std::string_view kLayerRolePoliticalCountryFillV1 =
+    "aeris.layer.political.country-fill.v1";
+inline constexpr std::string_view kLayerRolePoliticalBoundaryV1 =
+    "aeris.layer.political.boundary.v1";
+inline constexpr std::string_view kLayerRoleCountryLabelV1 =
+    "aeris.layer.label.country.v1";
+
 struct LayerSourceBinding final {
     std::string slot_id;
     std::string source_id;
