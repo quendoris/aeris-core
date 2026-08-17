@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 quendoris
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "aeris/storage/project.hpp"
+#include "aeris/storage/projection.hpp"
 #include "aeris/storage/session.hpp"
 
 #include <cmath>
@@ -25,10 +26,13 @@ int write_then_abort(const std::filesystem::path& path) {
     auto project = aeris::storage::ProjectStore::create(path, options);
     if (!project.ok()) return 11;
 
-    aeris::storage::ProjectMetadataUpdate mutation;
-    mutation.modified_utc = "2026-08-16T18:20:01Z";
-    mutation.projection_id = "aeris.projection.sinusoidal.v1";
-    if (!project.store->update_metadata(mutation).ok()) return 12;
+    aeris::storage::ProjectProjectionRecord projection{};
+    projection.model_id = std::string(aeris::storage::kProjectionModelSinusoidalV1);
+    projection.central_meridian_rad = 0.0;
+    projection.cut_model_id = std::string(aeris::storage::kProjectionCutModelSingleAntimeridianV1);
+    const auto mutation = aeris::storage::set_project_projection(
+        *project.store, projection, "2026-08-16T18:20:01Z");
+    if (!mutation.ok() || !mutation.changed || !mutation.durably_committed) return 12;
 
     auto session = aeris::storage::SessionStore::open_or_create(*project.store, "2026-08-16T18:20:02Z");
     if (!session.ok()) return 13;
@@ -51,8 +55,15 @@ int verify_after_abort(const std::filesystem::path& path) {
         return 20;
     }
     if (project.store->metadata().revision != 1U ||
-        project.store->metadata().projection_id != "aeris.projection.sinusoidal.v1") {
+        project.store->metadata().projection_id != aeris::storage::kProjectionModelSinusoidalV1) {
         return 21;
+    }
+    const auto projection = aeris::storage::load_project_projection(*project.store);
+    if (!projection.ok() ||
+        projection.record.model_id != aeris::storage::kProjectionModelSinusoidalV1 ||
+        projection.record.central_meridian_rad != 0.0 ||
+        projection.record.cut_model_id != aeris::storage::kProjectionCutModelSingleAntimeridianV1) {
+        return 27;
     }
 
     auto session = aeris::storage::SessionStore::open_or_create(*project.store, "2026-08-16T18:20:04Z");
