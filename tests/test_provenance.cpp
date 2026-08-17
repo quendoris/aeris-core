@@ -79,13 +79,13 @@ int main() {
     options.timestamp_utc = "2026-08-16T19:44:59Z";
     options.project_uuid = "11111111-2222-4333-8444-555555555555";
     auto project = ProjectStore::create(project_path, options);
-    expect(project.ok(), "draft 0.2 project should create");
+    expect(project.ok(), "draft 0.3 project should create");
     if (!project.ok()) {
         std::cerr << project.status.diagnostic << '\n';
         return 1;
     }
-    expect(project.store->metadata().format_major == 0 && project.store->metadata().format_minor == 2,
-           "project metadata should advertise draft format 0.2");
+    expect(project.store->metadata().format_major == 0 && project.store->metadata().format_minor == 3,
+           "project metadata should advertise draft format 0.3");
     expect(project.store->metadata().revision == 0U, "empty project revision should start at zero");
 
     auto empty = list_source_snapshots(*project.store);
