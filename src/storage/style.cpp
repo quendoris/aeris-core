@@ -93,7 +93,6 @@ constexpr std::size_t kMaxStyleNameBytes = 1024U;
     if (bytes.size() != 8U) return false;
     const double value = decode_f64le(bytes);
     if (!std::isfinite(value)) return false;
-    // AERIS canonical binary64 never persists negative zero.
     return !(value == 0.0 && bytes[7] == 0x80U &&
              std::all_of(bytes.begin(), bytes.begin() + 7,
                          [](const std::uint8_t byte) { return byte == 0U; }));
@@ -138,8 +137,6 @@ constexpr std::size_t kMaxStyleNameBytes = 1024U;
                     "aeris.style.value.rgba8.v1 requires exactly RGBA four bytes"};
         }
     }
-    // Unknown bounded type IDs deliberately remain opaque. Their versioned type
-    // contract owns canonical byte meaning; storage preserves bytes verbatim.
     return Status::success();
 }
 
@@ -252,7 +249,10 @@ constexpr std::size_t kMaxStyleNameBytes = 1024U;
     sqlite3_stmt* stmt,
     const int index,
     const std::vector<std::uint8_t>& value) {
-    const void* data = value.empty() ? nullptr : value.data();
+    static constexpr std::uint8_t kEmptyBlobSentinel = 0U;
+    const void* data = value.empty()
+        ? static_cast<const void*>(&kEmptyBlobSentinel)
+        : static_cast<const void*>(value.data());
     if (sqlite3_bind_blob(stmt, index, data, static_cast<int>(value.size()), SQLITE_TRANSIENT) != SQLITE_OK) {
         return {StorageError::sqlite_failure,
                 detail::sqlite_message(db, "sqlite style BLOB bind failed")};
@@ -616,6 +616,19 @@ constexpr std::size_t kMaxStyleNameBytes = 1024U;
     return Status::success();
 }
 
+[[nodiscard]] Status delete_style_contents(sqlite3* db, const std::string& style_id) {
+    for (const char* sql : {
+             "DELETE FROM aeris_style_property WHERE style_id=?;",
+             "DELETE FROM aeris_style_resource WHERE style_id=?;"}) {
+        detail::StmtPtr stmt;
+        Status status = detail::prepare(db, sql, stmt);
+        if (!status) return status;
+        if (!(status = detail::bind_text(db, stmt.get(), 1, style_id))) return status;
+        if (!(status = detail::step_done(db, stmt.get()))) return status;
+    }
+    return Status::success();
+}
+
 [[nodiscard]] Status load_layer_bindings(
     sqlite3* db,
     const std::string& layer_id,
@@ -741,10 +754,7 @@ StyleMutationResult set_style(
         if (status && sqlite3_changes(db.get()) != 1) {
             status = {StorageError::schema_invalid, "style update did not affect exactly one row"};
         }
-        if (status) status = detail::exec(
-            db.get(), ("DELETE FROM aeris_style_property WHERE style_id='" + record.style_id + "';").c_str());
-        if (status) status = detail::exec(
-            db.get(), ("DELETE FROM aeris_style_resource WHERE style_id='" + record.style_id + "';").c_str());
+        if (status) status = delete_style_contents(db.get(), record.style_id);
     } else {
         detail::StmtPtr insert;
         status = detail::prepare(
