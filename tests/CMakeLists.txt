@@ -55,6 +55,14 @@ if(TARGET aeris_storage)
     aeris_add_storage_test(aeris_test_storage test_storage.cpp project_storage)
     aeris_add_storage_test(aeris_test_provenance test_provenance.cpp project_storage_provenance)
     aeris_add_storage_test(aeris_test_geometry_storage test_geometry_storage.cpp project_storage_geometry)
+    aeris_add_storage_test(
+        aeris_test_geometry_corruption
+        test_geometry_corruption.cpp
+        project_storage_geometry_corruption
+    )
+    # This hostile-file fixture deliberately edits SQLite rows below the
+    # storage API, so it links the same private SQLite dependency explicitly.
+    target_link_libraries(aeris_test_geometry_corruption PRIVATE ${AERIS_SQLITE_TARGET})
 
     add_executable(aeris_storage_abrupt storage_abrupt.cpp)
     target_link_libraries(aeris_storage_abrupt PRIVATE AERIS::storage)
