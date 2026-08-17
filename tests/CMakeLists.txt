@@ -43,6 +43,7 @@ aeris_add_core_test(aeris_test_source_adapter test_source_adapter.cpp source_ada
 aeris_add_core_test(aeris_test_acquisition test_acquisition.cpp source_acquisition)
 aeris_add_core_test(aeris_test_registry test_registry.cpp source_registry)
 aeris_add_core_test(aeris_test_shapefile test_shapefile.cpp shapefile_reader)
+aeris_add_core_test(aeris_test_dbf test_dbf.cpp dbf_reader)
 aeris_add_core_test(aeris_test_sha256 test_sha256.cpp sha256)
 aeris_add_core_test(aeris_test_natural_earth test_natural_earth.cpp natural_earth_adapter)
 aeris_add_core_test(aeris_test_globe_view test_globe_view.cpp globe_view)
