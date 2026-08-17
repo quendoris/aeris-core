@@ -92,6 +92,7 @@ if(AERIS_BUILD_STORAGE)
         src/storage/provenance.cpp
         src/storage/geometry.cpp
         src/storage/dataset.cpp
+        src/storage/feature_property.cpp
         src/storage/resource.cpp
         src/storage/layer.cpp
         src/storage/style.cpp

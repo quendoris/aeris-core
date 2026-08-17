@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "aeris/storage/dataset.hpp"
 
+#include "feature_property_detail.hpp"
 #include "sqlite_detail.hpp"
 
 #include <algorithm>
@@ -622,6 +623,27 @@ Status advance_project_revision(
     return status;
 }
 
+Status validate_property_geometry_match(const SourceDatasetRecord& record) {
+    if (!record.feature_properties.has_value()) return Status::success();
+    const SourceFeaturePropertiesRecord& properties = *record.feature_properties;
+    if (properties.source_id != record.source.source_id ||
+        properties.source_id != record.geometry.source_id) {
+        return {StorageError::invalid_argument,
+                "source dataset feature-property source ID must match provenance and geometry"};
+    }
+    if (properties.features.size() != record.geometry.features.size()) {
+        return {StorageError::invalid_argument,
+                "complete feature properties must contain exactly every dataset geometry feature"};
+    }
+    for (std::size_t index = 0U; index < properties.features.size(); ++index) {
+        if (properties.features[index].stable_id != record.geometry.features[index].stable_id) {
+            return {StorageError::invalid_argument,
+                    "feature property stable-ID set must exactly match dataset canonical geometry"};
+        }
+    }
+    return Status::success();
+}
+
 }  // namespace
 
 SourceDatasetMutationResult store_source_dataset(
@@ -637,6 +659,11 @@ SourceDatasetMutationResult store_source_dataset(
     SourceDatasetRecord record = input;
     canonicalize_source(record.source);
     canonicalize_geometry(record.geometry);
+    if (record.feature_properties.has_value()) {
+        Status property_status =
+            detail::canonicalize_and_validate_feature_properties(*record.feature_properties);
+        if (!property_status) return {std::move(property_status), false, false};
+    }
 
     if (record.source.source_id != record.geometry.source_id) {
         return {{StorageError::invalid_argument,
@@ -647,6 +674,8 @@ SourceDatasetMutationResult store_source_dataset(
     Status status = validate_source(record.source);
     if (!status) return {std::move(status), false, false};
     status = validate_geometry(record.geometry);
+    if (!status) return {std::move(status), false, false};
+    status = validate_property_geometry_match(record);
     if (!status) return {std::move(status), false, false};
 
     detail::DbPtr db;
@@ -664,6 +693,7 @@ SourceDatasetMutationResult store_source_dataset(
 
     bool source_present = false;
     bool geometry_present = false;
+    bool properties_present = false;
     status = row_exists(
         db.get(), "SELECT 1 FROM aeris_source WHERE source_id=?;",
         record.source.source_id, source_present);
@@ -671,6 +701,11 @@ SourceDatasetMutationResult store_source_dataset(
         status = row_exists(
             db.get(), "SELECT 1 FROM aeris_source_geometry WHERE source_id=?;",
             record.source.source_id, geometry_present);
+    }
+    if (status) {
+        status = row_exists(
+            db.get(), "SELECT 1 FROM aeris_source_feature_properties WHERE source_id=?;",
+            record.source.source_id, properties_present);
     }
     if (!status) {
         detail::rollback(db.get());
@@ -680,6 +715,12 @@ SourceDatasetMutationResult store_source_dataset(
         detail::rollback(db.get());
         return {{StorageError::schema_invalid,
                  "source geometry marker exists without its provenance parent"},
+                false, false};
+    }
+    if (!geometry_present && properties_present) {
+        detail::rollback(db.get());
+        return {{StorageError::schema_invalid,
+                 "feature property marker exists without canonical source geometry"},
                 false, false};
     }
 
@@ -704,27 +745,58 @@ SourceDatasetMutationResult store_source_dataset(
     if (geometry_present) {
         std::optional<SourceGeometryRecord> existing_geometry;
         status = read_existing_geometry(project, record.geometry.source_id, existing_geometry);
-        detail::rollback(db.get());
-        if (!status) return {std::move(status), false, false};
-        if (!existing_geometry.has_value()) {
+        if (!status || !existing_geometry.has_value()) {
+            detail::rollback(db.get());
+            if (!status) return {std::move(status), false, false};
             return {{StorageError::schema_invalid,
                      "geometry existence probe disagrees with canonical geometry reader"},
                     false, false};
         }
-        status = project.refresh_metadata();
-        if (!status) return {std::move(status), false, false};
-        if (equal_geometry(*existing_geometry, record.geometry)) {
-            return {Status::success(), false, false};
+        if (!equal_geometry(*existing_geometry, record.geometry)) {
+            detail::rollback(db.get());
+            return {{StorageError::record_exists,
+                     "source ID already exists with different immutable canonical geometry"},
+                    false, false};
         }
-        return {{StorageError::record_exists,
-                 "source ID already exists with different immutable canonical geometry"},
-                false, false};
     }
 
-    if (!source_present) {
-        status = insert_source(db.get(), record.source);
+    if (record.feature_properties.has_value() && properties_present) {
+        std::optional<SourceFeaturePropertiesRecord> existing_properties;
+        status = detail::read_existing_feature_properties(
+            project, record.source.source_id, existing_properties);
+        if (!status || !existing_properties.has_value()) {
+            detail::rollback(db.get());
+            if (!status) return {std::move(status), false, false};
+            return {{StorageError::schema_invalid,
+                     "feature property existence probe disagrees with canonical reader"},
+                    false, false};
+        }
+        if (!detail::equal_feature_properties(
+                *existing_properties, *record.feature_properties)) {
+            detail::rollback(db.get());
+            return {{StorageError::record_exists,
+                     "source already has different immutable complete feature properties"},
+                    false, false};
+        }
     }
-    if (status) status = insert_geometry(db.get(), record.geometry);
+
+    const bool insert_source_needed = !source_present;
+    const bool insert_geometry_needed = !geometry_present;
+    const bool insert_properties_needed =
+        record.feature_properties.has_value() && !properties_present;
+
+    if (!insert_source_needed && !insert_geometry_needed && !insert_properties_needed) {
+        detail::rollback(db.get());
+        status = project.refresh_metadata();
+        if (!status) return {std::move(status), false, false};
+        return {Status::success(), false, false};
+    }
+
+    if (insert_source_needed) status = insert_source(db.get(), record.source);
+    if (status && insert_geometry_needed) status = insert_geometry(db.get(), record.geometry);
+    if (status && insert_properties_needed) {
+        status = detail::insert_feature_properties(db.get(), *record.feature_properties);
+    }
     if (status) status = advance_project_revision(db.get(), project, modified_utc);
     if (!status) {
         detail::rollback(db.get());

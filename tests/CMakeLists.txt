@@ -70,6 +70,20 @@ if(TARGET aeris_storage)
     target_link_libraries(aeris_test_dataset_atomicity PRIVATE ${AERIS_SQLITE_TARGET})
 
     aeris_add_storage_test(
+        aeris_test_dataset_properties_atomicity
+        test_dataset_properties_atomicity.cpp
+        project_storage_dataset_properties_atomicity
+    )
+    target_link_libraries(aeris_test_dataset_properties_atomicity PRIVATE ${AERIS_SQLITE_TARGET})
+
+    aeris_add_storage_test(
+        aeris_test_feature_property
+        test_feature_property.cpp
+        project_storage_feature_property
+    )
+    target_link_libraries(aeris_test_feature_property PRIVATE ${AERIS_SQLITE_TARGET})
+
+    aeris_add_storage_test(
         aeris_test_resource
         test_resource.cpp
         project_storage_resource
@@ -130,6 +144,11 @@ if(TARGET aeris_project)
         aeris_test_project_source_bridge
         test_project_source_bridge.cpp
         project_source_bridge
+    )
+    aeris_add_project_test(
+        aeris_test_project_feature_property_bridge
+        test_project_feature_property_bridge.cpp
+        project_feature_property_bridge
     )
 endif()
 

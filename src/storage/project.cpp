@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "aeris/storage/project.hpp"
 
+#include "feature_property_detail.hpp"
 #include "geometry_detail.hpp"
 #include "layer_detail.hpp"
 #include "projection_detail.hpp"
@@ -176,6 +177,8 @@ Status validate_schema_surface(sqlite3* db) {
              "SELECT source_id,model_id,encoding_id,feature_count FROM aeris_source_geometry LIMIT 0;",
              "SELECT source_id,stable_id,source_feature_id,ring_count FROM aeris_feature LIMIT 0;",
              "SELECT source_id,stable_id,ring_index,role,interior_side,longitude_winding,closing_longitude_f64le,vertex_count,vertices_f64le FROM aeris_feature_ring LIMIT 0;",
+             "SELECT source_id,model_id,encoding_id,feature_count FROM aeris_source_feature_properties LIMIT 0;",
+             "SELECT source_id,stable_id,property_key,value_type_id,value_payload FROM aeris_feature_property LIMIT 0;",
              "SELECT id,model_id,central_meridian_f64le,cut_model_id FROM aeris_projection LIMIT 0;",
              "SELECT resource_id,sha256,media_type,size_bytes,storage_mode,retrieval_uri,required_for_reproduction,chunk_count FROM aeris_resource LIMIT 0;",
              "SELECT resource_id,chunk_index,sha256,payload FROM aeris_resource_chunk LIMIT 0;",
@@ -414,7 +417,7 @@ ProjectStoreResult ProjectStore::create(
 
     const char* schema =
         "PRAGMA application_id=1095062089;"
-        "PRAGMA user_version=7;"
+        "PRAGMA user_version=8;"
         "CREATE TABLE aeris_meta("
         "id INTEGER PRIMARY KEY CHECK(id=1),"
         "project_uuid TEXT NOT NULL,"
@@ -486,6 +489,21 @@ ProjectStoreResult ProjectStore::create(
         "PRIMARY KEY(source_id,stable_id,ring_index),"
         "FOREIGN KEY(source_id,stable_id) REFERENCES aeris_feature(source_id,stable_id) ON DELETE CASCADE,"
         "CHECK(length(vertices_f64le)=vertex_count*16)"
+        ");"
+        "CREATE TABLE aeris_source_feature_properties("
+        "source_id TEXT PRIMARY KEY REFERENCES aeris_source_geometry(source_id) ON DELETE CASCADE,"
+        "model_id TEXT NOT NULL,"
+        "encoding_id TEXT NOT NULL,"
+        "feature_count INTEGER NOT NULL CHECK(feature_count>=0 AND feature_count<=1000000)"
+        ");"
+        "CREATE TABLE aeris_feature_property("
+        "source_id TEXT NOT NULL,"
+        "stable_id TEXT NOT NULL,"
+        "property_key TEXT NOT NULL,"
+        "value_type_id TEXT NOT NULL,"
+        "value_payload BLOB NOT NULL CHECK(length(value_payload)<=1048576),"
+        "PRIMARY KEY(source_id,stable_id,property_key),"
+        "FOREIGN KEY(source_id,stable_id) REFERENCES aeris_feature(source_id,stable_id) ON DELETE CASCADE"
         ");"
         "CREATE TABLE aeris_resource("
         "resource_id TEXT PRIMARY KEY,"
@@ -749,6 +767,7 @@ Status ProjectStore::verify_integrity() const {
     if (!(status = validate_frozen_claim(impl_->db.get(), metadata))) return status;
     if (!(status = detail::verify_projection_semantics(*this))) return status;
     if (!(status = detail::verify_geometry_semantics(*this))) return status;
+    if (!(status = detail::verify_feature_property_semantics(*this))) return status;
     if (!(status = detail::verify_resource_semantics(*this))) return status;
     if (!(status = detail::verify_layer_semantics(*this))) return status;
     return detail::verify_style_semantics(*this);

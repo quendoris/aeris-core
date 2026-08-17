@@ -4,7 +4,9 @@
 #include "aeris/source/adapter.hpp"
 
 #include <cstdlib>
+#include <limits>
 #include <iostream>
+#include <string>
 #include <string_view>
 #include <utility>
 
@@ -61,6 +63,12 @@ aeris::source::Result valid_result() {
     return result;
 }
 
+const aeris::source::Request kRequest{
+    aeris::source::Capability::land,
+    "fixture-v1",
+    "",
+};
+
 void test_descriptor_and_capabilities() {
     const FakeAdapter adapter{};
     const auto descriptor = adapter.descriptor();
@@ -72,24 +80,89 @@ void test_descriptor_and_capabilities() {
 void test_success_validation() {
     const FakeAdapter adapter{};
     const auto result = valid_result();
-    const aeris::source::Request request{aeris::source::Capability::land, "fixture-v1", ""};
-    expect_true("valid result accepted", aeris::source::validate_result(adapter, request, result) == aeris::source::SourceError::none);
+    expect_true("valid geometry-only result accepted",
+                aeris::source::validate_result(adapter, kRequest, result) == aeris::source::SourceError::none);
 }
 
 void test_wrong_provider_rejected() {
     const FakeAdapter adapter{};
     auto result = valid_result();
     result.provenance.provider = "other-provider";
-    const aeris::source::Request request{aeris::source::Capability::land, "fixture-v1", ""};
-    expect_true("wrong provider rejected", aeris::source::validate_result(adapter, request, result) == aeris::source::SourceError::malformed_source);
+    expect_true("wrong provider rejected",
+                aeris::source::validate_result(adapter, kRequest, result) == aeris::source::SourceError::malformed_source);
 }
 
 void test_missing_provenance_rejected() {
     const FakeAdapter adapter{};
     auto result = valid_result();
     result.provenance.content_sha256.clear();
-    const aeris::source::Request request{aeris::source::Capability::land, "fixture-v1", ""};
-    expect_true("missing provenance rejected", aeris::source::validate_result(adapter, request, result) == aeris::source::SourceError::provenance_incomplete);
+    expect_true("missing provenance rejected",
+                aeris::source::validate_result(adapter, kRequest, result) == aeris::source::SourceError::provenance_incomplete);
+}
+
+void test_incomplete_property_channel_rejected() {
+    const FakeAdapter adapter{};
+    auto result = valid_result();
+    result.features.front().properties.push_back({"name", std::string("Alpha")});
+    expect_true("partial property payload without completeness marker rejected",
+                aeris::source::validate_result(adapter, kRequest, result) == aeris::source::SourceError::malformed_source);
+}
+
+void test_complete_empty_property_channel_accepted() {
+    const FakeAdapter adapter{};
+    auto result = valid_result();
+    result.feature_properties_complete = true;
+    expect_true("complete verified-empty property channel accepted",
+                aeris::source::validate_result(adapter, kRequest, result) == aeris::source::SourceError::none);
+}
+
+void test_complete_typed_properties_accepted() {
+    const FakeAdapter adapter{};
+    auto result = valid_result();
+    result.feature_properties_complete = true;
+    auto& properties = result.features.front().properties;
+    properties.push_back({"name", std::string("Åland")});
+    properties.push_back({"admin_level", static_cast<std::int64_t>(0)});
+    properties.push_back({"claimed", true});
+    properties.push_back({"weight", 0.5});
+    expect_true("complete typed property channel accepted",
+                aeris::source::validate_result(adapter, kRequest, result) == aeris::source::SourceError::none);
+}
+
+void test_duplicate_property_key_rejected() {
+    const FakeAdapter adapter{};
+    auto result = valid_result();
+    result.feature_properties_complete = true;
+    result.features.front().properties.push_back({"name", std::string("Alpha")});
+    result.features.front().properties.push_back({"name", std::string("Beta")});
+    expect_true("duplicate feature property key rejected",
+                aeris::source::validate_result(adapter, kRequest, result) == aeris::source::SourceError::malformed_source);
+}
+
+void test_nonfinite_property_rejected() {
+    const FakeAdapter adapter{};
+    auto result = valid_result();
+    result.feature_properties_complete = true;
+    result.features.front().properties.push_back({
+        "weight", std::numeric_limits<double>::quiet_NaN()});
+    expect_true("non-finite feature property rejected",
+                aeris::source::validate_result(adapter, kRequest, result) == aeris::source::SourceError::malformed_source);
+}
+
+void test_invalid_utf8_and_nul_rejected() {
+    const FakeAdapter adapter{};
+
+    auto invalid_key = valid_result();
+    invalid_key.feature_properties_complete = true;
+    invalid_key.features.front().properties.push_back({std::string("na\0me", 5U), std::string("Alpha")});
+    expect_true("NUL in feature property key rejected",
+                aeris::source::validate_result(adapter, kRequest, invalid_key) == aeris::source::SourceError::malformed_source);
+
+    auto invalid_text = valid_result();
+    invalid_text.feature_properties_complete = true;
+    invalid_text.features.front().properties.push_back({"name", std::string("\xC0\xAF", 2U)});
+    expect_true("overlong invalid UTF-8 feature property rejected",
+                aeris::source::validate_result(adapter, kRequest, invalid_text) == aeris::source::SourceError::malformed_source);
 }
 
 }  // namespace
@@ -99,6 +172,12 @@ int main() {
     test_success_validation();
     test_wrong_provider_rejected();
     test_missing_provenance_rejected();
+    test_incomplete_property_channel_rejected();
+    test_complete_empty_property_channel_accepted();
+    test_complete_typed_properties_accepted();
+    test_duplicate_property_key_rejected();
+    test_nonfinite_property_rejected();
+    test_invalid_utf8_and_nul_rejected();
 
     if (failures != 0) {
         std::cerr << failures << " test assertion(s) failed\n";
