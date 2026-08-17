@@ -47,8 +47,9 @@ struct SourceBridgeResult final {
 
 // The bridge deliberately accepts a VerifiedSnapshot and AdapterRegistry rather
 // than a caller-supplied source::Result. Adapter output must therefore pass the
-// ordinary registry validation path before immutable provenance can enter the
-// canonical project database.
+// ordinary registry validation path and describe the exact verified acquisition
+// before provenance, resource identity and canonical WGS84 feature geometry are
+// committed to the project as one acknowledged dataset mutation.
 [[nodiscard]] SourceBridgeResult record_verified_source_snapshot(
     storage::ProjectStore& project,
     const source::AdapterRegistry& registry,
