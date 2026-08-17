@@ -45,6 +45,11 @@ void MapCanvas::set_busy(const bool busy) {
     update();
 }
 
+void MapCanvas::set_layer_render_state(const LayerRenderState state) {
+    layer_render_state_ = state;
+    update();
+}
+
 void MapCanvas::set_camera_callback(CameraCallback callback) {
     camera_callback_ = std::move(callback);
 }
@@ -107,8 +112,10 @@ void MapCanvas::paintEvent(QPaintEvent*) {
             t
         );
         apply_world_transform(painter, bounds, width(), height(), zoom_);
-        draw_scene_geometry(painter, unfold_->globe_endpoint, 1.0 - t);
-        draw_scene_geometry(painter, unfold_->flat_endpoint, t);
+        LayerRenderState transition_layers = layer_render_state_;
+        transition_layers.labels_visible = false;
+        draw_scene_geometry(painter, unfold_->globe_endpoint, 1.0 - t, transition_layers);
+        draw_scene_geometry(painter, unfold_->flat_endpoint, t, transition_layers);
         draw_unfold_guides(painter, *unfold_, unfold_progress_);
 
         painter.resetTransform();
@@ -142,7 +149,7 @@ void MapCanvas::paintEvent(QPaintEvent*) {
     }
 
     apply_world_transform(painter, scene_bounds(scene_), width(), height(), zoom_);
-    draw_scene_geometry(painter, scene_, 1.0);
+    draw_scene_geometry(painter, scene_, 1.0, layer_render_state_);
 
     painter.resetTransform();
     painter.setRenderHint(QPainter::Antialiasing, true);
