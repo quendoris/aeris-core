@@ -170,6 +170,11 @@ if(TARGET aeris_project)
         test_project_world_layers.cpp
         project_world_layers
     )
+    aeris_add_project_test(
+        aeris_test_project_source_reader
+        test_project_source_reader.cpp
+        project_source_reader
+    )
 endif()
 
 if(TARGET aeris_diagnostic_svg)
