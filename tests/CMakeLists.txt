@@ -90,6 +90,13 @@ if(TARGET aeris_storage)
     )
     target_link_libraries(aeris_test_style PRIVATE AERIS::hash ${AERIS_SQLITE_TARGET})
 
+    aeris_add_storage_test(
+        aeris_test_projection_storage
+        test_projection_storage.cpp
+        project_storage_projection
+    )
+    target_link_libraries(aeris_test_projection_storage PRIVATE ${AERIS_SQLITE_TARGET})
+
     add_executable(aeris_storage_abrupt storage_abrupt.cpp)
     target_link_libraries(aeris_storage_abrupt PRIVATE AERIS::storage)
     target_compile_features(aeris_storage_abrupt PRIVATE cxx_std_17)

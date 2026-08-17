@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 quendoris
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "aeris/storage/project.hpp"
+#include "aeris/storage/projection.hpp"
 #include "aeris/storage/provenance.hpp"
 
 #include <atomic>
@@ -85,35 +86,55 @@ int main() {
     ready.store(0, std::memory_order_release);
     go.store(false, std::memory_order_release);
     Status metadata_status[2];
-    const auto metadata_worker = [&](const int index, ProjectStore& project, const bool projection) {
-        ProjectMetadataUpdate update;
-        update.modified_utc = projection ? "2026-08-16T19:50:03Z" : "2026-08-16T19:50:04Z";
-        if (projection) update.projection_id = "aeris.projection.concurrent.v1";
-        else update.worldview_id = "concurrent-worldview";
+
+    const auto projection_worker = [&] {
+        ProjectProjectionRecord projection{};
+        projection.model_id = "aeris.projection.concurrent.v1";
+        projection.central_meridian_rad = 0.25;
+        projection.cut_model_id = "aeris.cut.concurrent.v1";
         wait_for_start(ready, go);
-        metadata_status[index] = project.update_metadata(update);
+        metadata_status[0] = set_project_projection(
+            *first.store, projection, "2026-08-16T19:50:03Z").status;
+    };
+    const auto worldview_worker = [&] {
+        ProjectMetadataUpdate update;
+        update.modified_utc = "2026-08-16T19:50:04Z";
+        update.worldview_id = "concurrent-worldview";
+        wait_for_start(ready, go);
+        metadata_status[1] = second.store->update_metadata(update);
     };
 
-    std::thread m1(metadata_worker, 0, std::ref(*first.store), true);
-    std::thread m2(metadata_worker, 1, std::ref(*second.store), false);
+    std::thread m1(projection_worker);
+    std::thread m2(worldview_worker);
     while (ready.load(std::memory_order_acquire) != 2) std::this_thread::yield();
     go.store(true, std::memory_order_release);
     m1.join();
     m2.join();
-    if (!metadata_status[0].ok() || !metadata_status[1].ok()) return 16;
+    if (!metadata_status[0].ok() || !metadata_status[1].ok()) {
+        std::cerr << "structured projection and worldview mutations should serialize successfully\n";
+        return 16;
+    }
 
     if (!first.store->refresh_metadata().ok() || !second.store->refresh_metadata().ok()) return 17;
     const auto& final = first.store->metadata();
     if (final.revision != 3U || final.projection_id != "aeris.projection.concurrent.v1" ||
         final.worldview_id != "concurrent-worldview") {
-        std::cerr << "serialized metadata updates must preserve independent fields and revisions\n";
+        std::cerr << "serialized structured projection/worldview updates must preserve independent state and revisions\n";
         return 18;
     }
     if (second.store->metadata().revision != 3U || second.store->metadata().projection_id != final.projection_id ||
         second.store->metadata().worldview_id != final.worldview_id) return 19;
 
+    const auto projection = load_project_projection(*first.store);
+    if (!projection.ok() || projection.record.model_id != "aeris.projection.concurrent.v1" ||
+        projection.record.central_meridian_rad != 0.25 ||
+        projection.record.cut_model_id != "aeris.cut.concurrent.v1") {
+        std::cerr << "structured projection must survive concurrent worldview mutation\n";
+        return 20;
+    }
+
     first.store.reset();
     second.store.reset();
     std::filesystem::remove_all(root, ec);
-    return ec ? 20 : 0;
+    return ec ? 21 : 0;
 }

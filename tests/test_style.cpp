@@ -134,8 +134,9 @@ void test_style_graph_and_portability() {
     ProjectStore* project = fixture.project();
     expect_true("style project creates", project != nullptr);
     if (project == nullptr) return;
-    expect_true("generation 6 project advertises draft 0.6",
-                project->metadata().format_major == 0 && project->metadata().format_minor == 6);
+    expect_true("style project advertises current draft",
+                project->metadata().format_major == kDraftFormatMajor &&
+                project->metadata().format_minor == kDraftFormatMinor);
 
     const ProjectResourceIdentity atlas = atlas_identity(fixture.asset_path());
     const auto stored_asset = store_external_resource(

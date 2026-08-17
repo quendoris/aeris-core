@@ -78,6 +78,9 @@ int main() {
     expect(std::filesystem::exists(project_path), "project file should exist immediately after acknowledged creation");
     expect(!has_staging_directory(root, ".aeris-create-"), "successful project create must remove sibling staging state");
     expect(created.store->metadata().project_uuid == uuid, "project UUID should match explicit create identity");
+    expect(created.store->metadata().format_major == kDraftFormatMajor &&
+               created.store->metadata().format_minor == kDraftFormatMinor,
+           "new project metadata should advertise current draft format");
     expect(created.store->metadata().revision == 0U, "new project revision should be zero");
     expect(created.store->metadata().projection_id == "aeris.projection.unspecified", "new project projection should be explicit unspecified value");
     expect(!created.store->metadata().frozen, "new project should begin unfrozen until the resource contract verifies portability");
@@ -89,18 +92,34 @@ int main() {
     auto frozen_create = ProjectStore::create(root / "illegal-frozen.aeris", illegal_frozen_create);
     expect_error(frozen_create.status, StorageError::invalid_argument, "creation must not assert unverified frozen state");
 
+    ProjectCreateOptions illegal_projection_create = create_options;
+    illegal_projection_create.projection_id = "aeris.projection.mollweide.v1";
+    auto projection_create = ProjectStore::create(root / "legacy-projection.aeris", illegal_projection_create);
+    expect_error(projection_create.status, StorageError::invalid_argument,
+                 "creation must not invent structured projection semantics from a summary string");
+
     auto duplicate = ProjectStore::create(project_path, create_options);
     expect_error(duplicate.status, StorageError::path_exists, "project create must refuse overwrite at atomic publish step");
     expect(!has_staging_directory(root, ".aeris-create-"), "failed no-overwrite publication must clean sibling staging state");
     expect(created.store->metadata().revision == 0U, "failed duplicate create must not mutate the already-open project");
 
+    ProjectMetadataUpdate legacy_projection;
+    legacy_projection.modified_utc = "2026-08-16T18:10:01Z";
+    legacy_projection.projection_id = "aeris.projection.mollweide.v1";
+    Status status = created.store->update_metadata(legacy_projection);
+    expect_error(status, StorageError::invalid_argument,
+                 "generic metadata API must reject projection mutation");
+    expect(created.store->metadata().revision == 0U,
+           "rejected legacy projection mutation must not advance revision");
+
     ProjectMetadataUpdate update;
     update.modified_utc = "2026-08-16T18:10:01Z";
-    update.projection_id = "aeris.projection.mollweide.v1";
     update.worldview_id = "neutral-disputed";
-    Status status = created.store->update_metadata(update);
-    expect(status.ok(), "acknowledged project mutation should commit");
-    expect(created.store->metadata().revision == 1U, "acknowledged project mutation should increment revision exactly once");
+    status = created.store->update_metadata(update);
+    expect(status.ok(), "acknowledged worldview mutation should commit");
+    expect(created.store->metadata().revision == 1U, "acknowledged worldview mutation should increment revision exactly once");
+    expect(created.store->metadata().projection_id == "aeris.projection.unspecified",
+           "ordinary metadata mutation must not drift structured projection summary");
     expect(!created.store->metadata().frozen, "ordinary metadata mutation should not invent frozen state");
 
     ProjectMetadataUpdate forbidden_freeze;
@@ -118,7 +137,7 @@ int main() {
         return 1;
     }
     expect(reopened.store->metadata().revision == 1U, "committed project revision should survive reopen");
-    expect(reopened.store->metadata().projection_id == "aeris.projection.mollweide.v1", "committed projection should survive reopen");
+    expect(reopened.store->metadata().projection_id == "aeris.projection.unspecified", "structured projection summary should survive reopen");
     expect(reopened.store->metadata().worldview_id == "neutral-disputed", "committed worldview should survive reopen");
     expect(!reopened.store->metadata().frozen, "unfrozen state should survive reopen");
 

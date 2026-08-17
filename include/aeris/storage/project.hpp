@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: 2026 quendoris
 // SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
-
 #include "aeris/storage/status.hpp"
 
 #include <cstdint>
@@ -14,9 +13,9 @@
 namespace aeris::storage {
 
 inline constexpr std::uint32_t kProjectApplicationId = 0x41455249U;  // "AERI"
-inline constexpr int kProjectSchemaGeneration = 6;
+inline constexpr int kProjectSchemaGeneration = 7;
 inline constexpr int kDraftFormatMajor = 0;
-inline constexpr int kDraftFormatMinor = 6;
+inline constexpr int kDraftFormatMinor = 7;
 
 struct ProjectMetadata {
     std::string project_uuid;
@@ -37,6 +36,10 @@ struct ProjectCreateOptions {
     std::string project_uuid;  // Empty requests generated UUIDv4.
     std::string producer{"aeris"};
     std::string producer_version{"0.1.0"};
+
+    // Pre-1.0 compatibility field. Structured projection state is authoritative
+    // in generation 7, so creation currently accepts only explicit unspecified
+    // here; use set_project_projection() after creation for a concrete model.
     std::string projection_id{"aeris.projection.unspecified"};
     std::string worldview_id{"unspecified"};
 
@@ -48,6 +51,10 @@ struct ProjectCreateOptions {
 
 struct ProjectMetadataUpdate {
     std::string modified_utc;
+
+    // Retained only to fail closed at the old API boundary. Structured
+    // projection state must be changed with set_project_projection(), which
+    // updates the authoritative singleton and this metadata summary atomically.
     std::optional<std::string> projection_id;
     std::optional<std::string> worldview_id;
 

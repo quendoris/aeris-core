@@ -95,6 +95,7 @@ if(AERIS_BUILD_STORAGE)
         src/storage/resource.cpp
         src/storage/layer.cpp
         src/storage/style.cpp
+        src/storage/projection.cpp
     )
     add_library(AERIS::storage ALIAS aeris_storage)
     target_include_directories(aeris_storage
