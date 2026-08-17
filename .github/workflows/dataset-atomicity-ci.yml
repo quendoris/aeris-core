@@ -1,0 +1,55 @@
+# SPDX-FileCopyrightText: 2026 quendoris
+# SPDX-License-Identifier: AGPL-3.0-only
+
+name: Dataset Atomicity CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'CMakeLists.txt'
+      - 'include/aeris/storage/**'
+      - 'src/storage/**'
+      - 'tests/CMakeLists.txt'
+      - 'tests/test_dataset_storage.cpp'
+      - 'tests/test_dataset_atomic_rollback.cpp'
+      - '.github/workflows/dataset-atomicity-ci.yml'
+  pull_request:
+    paths:
+      - 'CMakeLists.txt'
+      - 'include/aeris/storage/**'
+      - 'src/storage/**'
+      - 'tests/CMakeLists.txt'
+      - 'tests/test_dataset_storage.cpp'
+      - 'tests/test_dataset_atomic_rollback.cpp'
+      - '.github/workflows/dataset-atomicity-ci.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  atomicity:
+    name: Linux / dataset atomicity
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install SQLite development package
+        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
+      - name: Configure
+        run: >-
+          cmake -S . -B build-dataset-atomicity
+          -DAERIS_BUILD_STORAGE=ON
+          -DAERIS_BUILD_TESTS=ON
+          -DAERIS_BUILD_TOOLS=OFF
+          -DAERIS_WARNINGS_AS_ERRORS=ON
+          -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_CXX_FLAGS=-fsanitize=address,undefined\ -fno-omit-frame-pointer
+          -DCMAKE_EXE_LINKER_FLAGS=-fsanitize=address,undefined
+      - name: Build atomicity contracts
+        run: cmake --build build-dataset-atomicity --target aeris_test_dataset_storage aeris_test_dataset_atomic_rollback --parallel 2
+      - name: Test atomicity contracts
+        env:
+          ASAN_OPTIONS: detect_leaks=1
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+        run: ctest --test-dir build-dataset-atomicity --output-on-failure -R '^project_storage_dataset(_atomic_rollback)?$'
