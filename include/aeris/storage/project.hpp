@@ -14,9 +14,9 @@
 namespace aeris::storage {
 
 inline constexpr std::uint32_t kProjectApplicationId = 0x41455249U;  // "AERI"
-inline constexpr int kProjectSchemaGeneration = 5;
+inline constexpr int kProjectSchemaGeneration = 6;
 inline constexpr int kDraftFormatMajor = 0;
-inline constexpr int kDraftFormatMinor = 5;
+inline constexpr int kDraftFormatMinor = 6;
 
 struct ProjectMetadata {
     std::string project_uuid;

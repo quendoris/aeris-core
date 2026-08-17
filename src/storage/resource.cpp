@@ -55,8 +55,6 @@ constexpr std::uint64_t kMaxEmbeddedResourceBytes =
     if (value.empty()) return true;
 
     const std::size_t colon = value.find(':');
-    // Require an actual URI scheme and deliberately reject one-letter drive-like
-    // prefixes so machine-local Windows paths cannot masquerade as canonical URI.
     if (colon < 2U) return false;
     if (!std::isalpha(static_cast<unsigned char>(value.front()))) return false;
     for (std::size_t index = 1U; index < colon; ++index) {
@@ -100,13 +98,15 @@ constexpr std::uint64_t kMaxEmbeddedResourceBytes =
     return 1U + (size_bytes - 1U) / chunk;
 }
 
-[[nodiscard]] bool equal_identity(
+// Content identity is immutable. required_for_reproduction is deliberately not
+// part of this equality: bindings may monotonically promote an optional resource
+// to required without changing the content-addressed object itself.
+[[nodiscard]] bool equal_content_identity(
     const ProjectResourceIdentity& a,
     const ProjectResourceIdentity& b) noexcept {
     return a.resource_id == b.resource_id && a.sha256 == b.sha256 &&
            a.media_type == b.media_type && a.size_bytes == b.size_bytes &&
-           a.retrieval_uri == b.retrieval_uri &&
-           a.required_for_reproduction == b.required_for_reproduction;
+           a.retrieval_uri == b.retrieval_uri;
 }
 
 [[nodiscard]] std::string text_column(sqlite3_stmt* stmt, const int column) {
@@ -430,6 +430,28 @@ Status insert_resource_row(
     return detail::step_done(db, stmt.get());
 }
 
+Status promote_required(
+    sqlite3* db,
+    const std::string& resource_id,
+    bool& changed) {
+    detail::StmtPtr stmt;
+    Status status = detail::prepare(
+        db,
+        "UPDATE aeris_resource SET required_for_reproduction=1 "
+        "WHERE resource_id=? AND required_for_reproduction=0;",
+        stmt);
+    if (status) status = detail::bind_text(db, stmt.get(), 1, resource_id);
+    if (status) status = detail::step_done(db, stmt.get());
+    if (!status) return status;
+    const int affected = sqlite3_changes(db);
+    if (affected < 0 || affected > 1) {
+        return {StorageError::schema_invalid,
+                "resource requirement promotion affected an invalid row count"};
+    }
+    changed = affected == 1;
+    return Status::success();
+}
+
 Status mark_resource_embedded(
     sqlite3* db,
     const std::string& resource_id,
@@ -549,7 +571,7 @@ ResourceMutationResult store_external_resource(
         return {std::move(status), false, false, false};
     }
     if (existing.has_value()) {
-        if (!equal_identity(existing->identity, resource)) {
+        if (!equal_content_identity(existing->identity, resource)) {
             detail::rollback(db.get());
             return {{StorageError::record_exists,
                      "resource ID already exists with different immutable content identity"},
@@ -558,11 +580,42 @@ ResourceMutationResult store_external_resource(
         status = existing->storage_mode == ResourceStorageMode::embedded
             ? verify_embedded(db.get(), *existing, nullptr)
             : verify_external_no_chunks(db.get(), *existing);
-        detail::rollback(db.get());
-        if (!status) return {std::move(status), false, false, false};
+        if (!status) {
+            detail::rollback(db.get());
+            return {std::move(status), false, false, false};
+        }
+
+        bool requirement_changed = false;
+        if (resource.required_for_reproduction &&
+            !existing->identity.required_for_reproduction) {
+            status = promote_required(db.get(), resource.resource_id, requirement_changed);
+            if (!status) {
+                detail::rollback(db.get());
+                return {std::move(status), false, false, false};
+            }
+        }
+        if (!requirement_changed) {
+            detail::rollback(db.get());
+            status = project.refresh_metadata();
+            if (!status) return {std::move(status), false, false, false};
+            return {Status::success(), false, false, false};
+        }
+
+        std::optional<bool> frozen_override;
+        if (existing->storage_mode == ResourceStorageMode::external) frozen_override = false;
+        status = advance_project_revision(db.get(), project, modified_utc, frozen_override);
+        if (!status) {
+            detail::rollback(db.get());
+            return {std::move(status), false, false, false};
+        }
+        status = detail::commit(db.get());
+        if (!status) {
+            detail::rollback(db.get());
+            return {std::move(status), false, false, false};
+        }
         status = project.refresh_metadata();
-        if (!status) return {std::move(status), false, false, false};
-        return {Status::success(), false, false, false};
+        if (!status) return {std::move(status), false, false, true};
+        return {Status::success(), false, false, true};
     }
 
     status = insert_resource_row(db.get(), resource, ResourceStorageMode::external, 0U);
@@ -639,19 +692,49 @@ ResourceMutationResult embed_resource_file(
         detail::rollback(db.get());
         return {std::move(status), false, false, false};
     }
-    if (existing.has_value() && !equal_identity(existing->identity, resource)) {
+    if (existing.has_value() && !equal_content_identity(existing->identity, resource)) {
         detail::rollback(db.get());
         return {{StorageError::record_exists,
                  "resource ID already exists with different immutable content identity"},
                 false, false, false};
     }
+
+    bool requirement_changed = false;
+    if (existing.has_value() && resource.required_for_reproduction &&
+        !existing->identity.required_for_reproduction) {
+        status = promote_required(db.get(), resource.resource_id, requirement_changed);
+        if (!status) {
+            detail::rollback(db.get());
+            return {std::move(status), false, false, false};
+        }
+        existing->identity.required_for_reproduction = true;
+    }
+
     if (existing.has_value() && existing->storage_mode == ResourceStorageMode::embedded) {
         status = verify_embedded(db.get(), *existing, nullptr);
-        detail::rollback(db.get());
-        if (!status) return {std::move(status), false, false, false};
+        if (!status) {
+            detail::rollback(db.get());
+            return {std::move(status), false, false, false};
+        }
+        if (!requirement_changed) {
+            detail::rollback(db.get());
+            status = project.refresh_metadata();
+            if (!status) return {std::move(status), false, false, false};
+            return {Status::success(), false, false, false};
+        }
+        status = advance_project_revision(db.get(), project, modified_utc);
+        if (!status) {
+            detail::rollback(db.get());
+            return {std::move(status), false, false, false};
+        }
+        status = detail::commit(db.get());
+        if (!status) {
+            detail::rollback(db.get());
+            return {std::move(status), false, false, false};
+        }
         status = project.refresh_metadata();
-        if (!status) return {std::move(status), false, false, false};
-        return {Status::success(), false, false, false};
+        if (!status) return {std::move(status), false, false, true};
+        return {Status::success(), false, false, true};
     }
     if (existing.has_value()) {
         status = verify_external_no_chunks(db.get(), *existing);
