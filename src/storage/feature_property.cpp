@@ -286,6 +286,95 @@ Status decode_property(
             "feature property uses an unsupported value type identifier"};
 }
 
+Status query_feature_property_count(
+    sqlite3* db,
+    const std::string_view source_id,
+    const std::string_view stable_id,
+    std::uint32_t& property_count) {
+    detail::StmtPtr stmt;
+    Status status = detail::prepare(
+        db,
+        "SELECT COUNT(p.property_key) "
+        "FROM aeris_feature f "
+        "LEFT JOIN aeris_feature_property p "
+        "ON p.source_id=f.source_id AND p.stable_id=f.stable_id "
+        "WHERE f.source_id=? AND f.stable_id=? "
+        "GROUP BY f.stable_id;",
+        stmt);
+    if (!status) return status;
+    if (!(status = detail::bind_text(db, stmt.get(), 1, std::string(source_id)))) return status;
+    if (!(status = detail::bind_text(db, stmt.get(), 2, std::string(stable_id)))) return status;
+
+    const int rc = sqlite3_step(stmt.get());
+    if (rc == SQLITE_DONE) {
+        return {StorageError::record_not_found,
+                "feature does not exist in complete property-bearing geometry"};
+    }
+    if (rc != SQLITE_ROW || sqlite3_column_type(stmt.get(), 0) != SQLITE_INTEGER) {
+        return {StorageError::schema_invalid,
+                "feature property count lookup returned malformed data"};
+    }
+    const sqlite3_int64 count = sqlite3_column_int64(stmt.get(), 0);
+    if (sqlite3_step(stmt.get()) != SQLITE_DONE) {
+        return {StorageError::schema_invalid,
+                "feature property count lookup returned duplicate feature rows"};
+    }
+    if (count < 0 || count > static_cast<sqlite3_int64>(kMaxFeaturePropertiesPerFeature)) {
+        return {StorageError::schema_invalid,
+                "feature property count is outside canonical draft bounds"};
+    }
+    property_count = static_cast<std::uint32_t>(count);
+    return Status::success();
+}
+
+Status load_feature_properties_from_db(
+    sqlite3* db,
+    const std::string_view source_id,
+    const std::string_view stable_id,
+    const std::uint32_t expected_count,
+    std::vector<StoredFeatureProperty>& properties) {
+    detail::StmtPtr stmt;
+    Status status = detail::prepare(
+        db,
+        "SELECT property_key,value_type_id,value_payload "
+        "FROM aeris_feature_property WHERE source_id=? AND stable_id=? ORDER BY property_key;",
+        stmt);
+    if (!status) return status;
+    if (!(status = detail::bind_text(db, stmt.get(), 1, std::string(source_id)))) return status;
+    if (!(status = detail::bind_text(db, stmt.get(), 2, std::string(stable_id)))) return status;
+
+    properties.clear();
+    properties.reserve(expected_count);
+    std::string previous_key;
+    while (true) {
+        const int rc = sqlite3_step(stmt.get());
+        if (rc == SQLITE_DONE) break;
+        if (rc != SQLITE_ROW || sqlite3_column_type(stmt.get(), 0) != SQLITE_TEXT) {
+            return {StorageError::schema_invalid,
+                    "feature property row has malformed property key"};
+        }
+        StoredFeatureProperty property{};
+        property.key = text_column(stmt.get(), 0);
+        if (!bounded_identifier(property.key) ||
+            (!previous_key.empty() && property.key <= previous_key)) {
+            return {StorageError::schema_invalid,
+                    "feature property key ordering/identity is noncanonical"};
+        }
+        if (!(status = decode_property(stmt.get(), 1, 2, property))) return status;
+        previous_key = property.key;
+        properties.push_back(std::move(property));
+        if (properties.size() > kMaxFeaturePropertiesPerFeature) {
+            return {StorageError::schema_invalid,
+                    "feature property row count exceeds draft bound"};
+        }
+    }
+    if (properties.size() != static_cast<std::size_t>(expected_count)) {
+        return {StorageError::schema_invalid,
+                "feature property loader count disagrees with canonical index"};
+    }
+    return Status::success();
+}
+
 Status validate_geometry_match(
     const ProjectStore& project,
     const SourceFeaturePropertiesRecord& record) {
@@ -502,9 +591,14 @@ Status verify_feature_property_semantics(const ProjectStore& project) {
         "WHERE m.source_id IS NULL LIMIT 1;",
         orphan);
     if (!status) return status;
-    if (sqlite3_step(orphan.get()) == SQLITE_ROW) {
+    const int orphan_rc = sqlite3_step(orphan.get());
+    if (orphan_rc == SQLITE_ROW) {
         return {StorageError::schema_invalid,
                 "feature property row exists without complete source marker"};
+    }
+    if (orphan_rc != SQLITE_DONE) {
+        return {StorageError::sqlite_failure,
+                detail::sqlite_message(db.get(), "feature property orphan audit failed")};
     }
 
     detail::StmtPtr markers;
@@ -513,30 +607,58 @@ Status verify_feature_property_semantics(const ProjectStore& project) {
         "SELECT source_id FROM aeris_source_feature_properties ORDER BY source_id;",
         markers);
     if (!status) return status;
-    std::vector<std::string> source_ids;
+
     while (true) {
-        const int rc = sqlite3_step(markers.get());
-        if (rc == SQLITE_DONE) break;
-        if (rc != SQLITE_ROW || sqlite3_column_type(markers.get(), 0) != SQLITE_TEXT) {
+        const int marker_rc = sqlite3_step(markers.get());
+        if (marker_rc == SQLITE_DONE) break;
+        if (marker_rc != SQLITE_ROW || sqlite3_column_type(markers.get(), 0) != SQLITE_TEXT) {
             return {StorageError::schema_invalid,
                     "feature property marker catalog is malformed"};
         }
-        source_ids.push_back(text_column(markers.get(), 0));
-    }
-    db.reset();
+        const std::string source_id = text_column(markers.get(), 0);
+        std::uint64_t marker_count = 0U;
+        if (!(status = read_marker(db.get(), source_id, marker_count))) return status;
 
-    for (const std::string& source_id : source_ids) {
-        const SourceFeaturePropertiesIndexResult index =
-            list_source_feature_properties_index(project, source_id);
-        if (!index.ok()) return index.status;
-        for (const FeaturePropertiesIndexEntry& feature : index.features) {
-            const FeaturePropertiesLoadResult loaded =
-                load_feature_properties(project, source_id, feature.stable_id);
-            if (!loaded.ok()) return loaded.status;
-            if (loaded.properties.size() != static_cast<std::size_t>(feature.property_count)) {
+        detail::StmtPtr features;
+        status = detail::prepare(
+            db.get(),
+            "SELECT f.stable_id,COUNT(p.property_key) "
+            "FROM aeris_feature f "
+            "LEFT JOIN aeris_feature_property p "
+            "ON p.source_id=f.source_id AND p.stable_id=f.stable_id "
+            "WHERE f.source_id=? "
+            "GROUP BY f.stable_id ORDER BY f.stable_id;",
+            features);
+        if (!status) return status;
+        if (!(status = detail::bind_text(db.get(), features.get(), 1, source_id))) return status;
+
+        std::uint64_t observed_features = 0U;
+        while (true) {
+            const int feature_rc = sqlite3_step(features.get());
+            if (feature_rc == SQLITE_DONE) break;
+            if (feature_rc != SQLITE_ROW || sqlite3_column_type(features.get(), 0) != SQLITE_TEXT ||
+                sqlite3_column_type(features.get(), 1) != SQLITE_INTEGER) {
                 return {StorageError::schema_invalid,
-                        "feature property deep audit count mismatch"};
+                        "feature property deep audit index row is malformed"};
             }
+            const std::string stable_id = text_column(features.get(), 0);
+            const sqlite3_int64 count = sqlite3_column_int64(features.get(), 1);
+            if (!bounded_identifier(stable_id) || count < 0 ||
+                count > static_cast<sqlite3_int64>(kMaxFeaturePropertiesPerFeature)) {
+                return {StorageError::schema_invalid,
+                        "feature property deep audit index violates canonical bounds"};
+            }
+            std::vector<StoredFeatureProperty> properties;
+            if (!(status = load_feature_properties_from_db(
+                      db.get(), source_id, stable_id,
+                      static_cast<std::uint32_t>(count), properties))) {
+                return status;
+            }
+            ++observed_features;
+        }
+        if (observed_features != marker_count) {
+            return {StorageError::schema_invalid,
+                    "feature property marker count disagrees with canonical geometry feature set"};
         }
     }
     return Status::success();
@@ -616,19 +738,6 @@ FeaturePropertiesLoadResult load_feature_properties(
                  "feature property source/stable ID is invalid"}, {}};
     }
 
-    const SourceFeaturePropertiesIndexResult index =
-        list_source_feature_properties_index(project, source_id);
-    if (!index.ok()) return {index.status, {}};
-    const auto found = std::lower_bound(
-        index.features.begin(), index.features.end(), stable_id,
-        [](const FeaturePropertiesIndexEntry& entry, const std::string_view key) {
-            return entry.stable_id < key;
-        });
-    if (found == index.features.end() || found->stable_id != stable_id) {
-        return {{StorageError::record_not_found,
-                 "feature does not exist in complete property-bearing geometry"}, {}};
-    }
-
     detail::DbPtr db;
     Status status = detail::open_database(project.path(), SQLITE_OPEN_READONLY, db);
     if (!status) return {std::move(status), {}};
@@ -636,50 +745,22 @@ FeaturePropertiesLoadResult load_feature_properties(
         return {std::move(status), {}};
     }
 
-    detail::StmtPtr stmt;
-    status = detail::prepare(
-        db.get(),
-        "SELECT property_key,value_type_id,value_payload "
-        "FROM aeris_feature_property WHERE source_id=? AND stable_id=? ORDER BY property_key;",
-        stmt);
-    if (!status) return {std::move(status), {}};
-    if (!(status = detail::bind_text(db.get(), stmt.get(), 1, std::string(source_id)))) {
+    std::uint64_t marker_count = 0U;
+    if (!(status = read_marker(db.get(), source_id, marker_count))) {
         return {std::move(status), {}};
     }
-    if (!(status = detail::bind_text(db.get(), stmt.get(), 2, std::string(stable_id)))) {
+    (void)marker_count;
+
+    std::uint32_t property_count = 0U;
+    if (!(status = query_feature_property_count(
+              db.get(), source_id, stable_id, property_count))) {
         return {std::move(status), {}};
     }
 
     FeaturePropertiesLoadResult result{};
-    std::string previous_key;
-    while (true) {
-        const int rc = sqlite3_step(stmt.get());
-        if (rc == SQLITE_DONE) break;
-        if (rc != SQLITE_ROW || sqlite3_column_type(stmt.get(), 0) != SQLITE_TEXT) {
-            return {{StorageError::schema_invalid,
-                     "feature property row has malformed property key"}, {}};
-        }
-        StoredFeatureProperty property{};
-        property.key = text_column(stmt.get(), 0);
-        if (!bounded_identifier(property.key) ||
-            (!previous_key.empty() && property.key <= previous_key)) {
-            return {{StorageError::schema_invalid,
-                     "feature property key ordering/identity is noncanonical"}, {}};
-        }
-        if (!(status = decode_property(stmt.get(), 1, 2, property))) {
-            return {std::move(status), {}};
-        }
-        previous_key = property.key;
-        result.properties.push_back(std::move(property));
-        if (result.properties.size() > kMaxFeaturePropertiesPerFeature) {
-            return {{StorageError::schema_invalid,
-                     "feature property row count exceeds draft bound"}, {}};
-        }
-    }
-    if (result.properties.size() != static_cast<std::size_t>(found->property_count)) {
-        return {{StorageError::schema_invalid,
-                 "feature property loader count disagrees with canonical index"}, {}};
-    }
+    status = load_feature_properties_from_db(
+        db.get(), source_id, stable_id, property_count, result.properties);
+    if (!status) return {std::move(status), {}};
     result.status = Status::success();
     return result;
 }
