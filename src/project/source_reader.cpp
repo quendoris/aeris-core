@@ -9,13 +9,14 @@
 
 #include <algorithm>
 #include <limits>
-#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
 
 namespace aeris::project {
 namespace {
+
+using FeatureKey = std::pair<std::string, std::string>;
 
 [[nodiscard]] DurableSourceLoadResult failure(
     const DurableSourceLoadError error,
@@ -119,6 +120,30 @@ namespace {
     return provenance;
 }
 
+[[nodiscard]] std::vector<FeatureKey> feature_keys(
+    const std::vector<storage::FeatureGeometryIndexEntry>& features
+) {
+    std::vector<FeatureKey> keys;
+    keys.reserve(features.size());
+    for (const auto& feature : features) {
+        keys.emplace_back(feature.stable_id, feature.source_feature_id);
+    }
+    std::sort(keys.begin(), keys.end());
+    return keys;
+}
+
+[[nodiscard]] std::vector<FeatureKey> feature_keys(
+    const std::vector<storage::FeaturePropertiesIndexEntry>& features
+) {
+    std::vector<FeatureKey> keys;
+    keys.reserve(features.size());
+    for (const auto& feature : features) {
+        keys.emplace_back(feature.stable_id, feature.source_feature_id);
+    }
+    std::sort(keys.begin(), keys.end());
+    return keys;
+}
+
 }  // namespace
 
 DurableSourceLoadResult load_durable_source_result(
@@ -170,30 +195,16 @@ DurableSourceLoadResult load_durable_source_result(
     }
 
     bool properties_complete = false;
-    std::optional<storage::SourceFeaturePropertiesIndexResult> property_index;
     storage::SourceFeaturePropertiesIndexResult properties =
         storage::list_source_feature_properties_index(project, source_id);
     if (properties.ok()) {
         properties_complete = true;
-        property_index = std::move(properties);
-        if (property_index->features.size() != geometry_index.features.size()) {
+        if (feature_keys(geometry_index.features) != feature_keys(properties.features)) {
             return failure(
                 DurableSourceLoadError::storage_rejected,
-                "complete property marker cardinality differs from canonical geometry",
+                "complete property index does not describe the canonical geometry feature set",
                 storage::StorageError::schema_invalid
             );
-        }
-        for (std::size_t index = 0U; index < geometry_index.features.size(); ++index) {
-            if (geometry_index.features[index].stable_id !=
-                    property_index->features[index].stable_id ||
-                geometry_index.features[index].source_feature_id !=
-                    property_index->features[index].source_feature_id) {
-                return failure(
-                    DurableSourceLoadError::storage_rejected,
-                    "complete property index is not aligned with canonical geometry stable IDs",
-                    storage::StorageError::schema_invalid
-                );
-            }
         }
     } else if (properties.status.error != storage::StorageError::record_not_found) {
         return storage_failure(
@@ -238,16 +249,15 @@ DurableSourceLoadResult load_durable_source_result(
                     "durable feature contains unsupported ring topology enum"
                 );
             }
-            if (stored_ring.longitude_winding <
-                    static_cast<std::int32_t>(std::numeric_limits<int>::min()) ||
-                stored_ring.longitude_winding >
-                    static_cast<std::int32_t>(std::numeric_limits<int>::max())) {
+            const long long winding = static_cast<long long>(stored_ring.longitude_winding);
+            if (winding < static_cast<long long>(std::numeric_limits<int>::min()) ||
+                winding > static_cast<long long>(std::numeric_limits<int>::max())) {
                 return failure(
                     DurableSourceLoadError::unsupported_topology,
                     "durable ring longitude winding exceeds the in-memory int domain"
                 );
             }
-            ring.geometry.longitude_winding = static_cast<int>(stored_ring.longitude_winding);
+            ring.geometry.longitude_winding = static_cast<int>(winding);
             ring.geometry.closing_longitude_rad = stored_ring.closing_longitude_rad;
             ring.geometry.vertices.reserve(stored_ring.vertices.size());
             for (const storage::GeographicPointRecord& point : stored_ring.vertices) {
