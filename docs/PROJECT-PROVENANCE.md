@@ -1,9 +1,10 @@
 # AERIS — Project Provenance Persistence
 
 **Status:** DRAFT IMPLEMENTATION CONTRACT  
-**Implemented project draft:** schema generation 2 / format 0.2
+**Provenance introduced:** schema generation 2 / format 0.2  
+**Current implemented project draft:** schema generation 3 / format 0.3
 
-This document defines the durable source-provenance layer inside `.aeris` and the implemented orchestration boundary that is allowed to move already verified source identity into it. It builds on `STORAGE-FOUNDATION.md` and remains pre-1.0: development files have no long-term compatibility promise yet.
+This document defines the durable source-provenance layer inside `.aeris` and the implemented orchestration boundary that is allowed to move already verified source identity into it. Provenance semantics introduced in generation 2 remain present in the current generation-3 project container, which additionally carries canonical feature geometry. The format remains pre-1.0: development files have no long-term compatibility promise yet.
 
 ## 1. Dependency direction
 
@@ -17,7 +18,7 @@ AERIS::core
   verified-source orchestration
              ↓
 AERIS::storage
-  neutral provenance records / SQLite
+  neutral provenance records / canonical geometry / SQLite
 ```
 
 `AERIS::storage` does not include `source::Result`, `VerifiedSnapshot`, Natural Earth types, or source capability enums. The storage DTO uses neutral fixed-width numeric capability/temporal values plus exact strings.
@@ -28,9 +29,9 @@ This prevents SQLite schema details from becoming part of adapter contracts and 
 
 ## 2. Explicit draft schema evolution
 
-Adding canonical provenance is a file-format change, even before 1.0.
+Adding canonical provenance was a file-format change, even before 1.0.
 
-The project therefore advances from:
+It advanced the project from:
 
 ```text
 schema generation 1 / draft format 0.1
@@ -42,7 +43,9 @@ to:
 schema generation 2 / draft format 0.2
 ```
 
-AERIS does not silently reinterpret a generation-1 development file as generation 2. Pre-1.0 compatibility remains intentionally disposable until the stable format is frozen.
+Canonical feature geometry subsequently advances the **current project container** to generation 3 / draft 0.3 without changing the provenance field meanings defined here. See `PROJECT-GEOMETRY.md` for that additional contract.
+
+AERIS does not silently reinterpret an older development file as a newer draft generation. Pre-1.0 compatibility remains intentionally disposable until the stable format is frozen.
 
 ## 3. `aeris_source`
 
@@ -89,13 +92,13 @@ The primary key is `(source_id, logical_name)`. The source foreign key uses `ON 
 
 This table records **input content identity**, not yet general project resource storage.
 
-Generation 2 does not store cache-local absolute paths, opaque downloader state, embedded payloads, media-type policy, or frozen/portable storage mode. A verified acquisition-relative path is also not copied into the project as a machine-local locator.
+The current draft does not store cache-local absolute paths, opaque downloader state, embedded payloads, media-type policy, or frozen/portable storage mode. A verified acquisition-relative path is also not copied into the project as a machine-local locator.
 
 The aggregate snapshot hash produced by source verification already commits to the normalized portable relative path together with logical name, resource hash, and verified byte size. The project therefore preserves the verified aggregate identity without turning one cache layout into a canonical project path field.
 
 ## 5. Atomic source mutation
 
-A new source snapshot is acknowledged only after one SQLite transaction has committed all of the following:
+The low-level provenance storage operation acknowledges a new source snapshot only after one SQLite transaction has committed all of the following:
 
 ```text
 aeris_source row
@@ -105,6 +108,8 @@ aeris_source row
 ```
 
 A failure before commit leaves none of those semantic changes acknowledged. The open `ProjectStore` refreshes its metadata after a successful provenance commit.
+
+This transaction is intentionally narrower than the next product-level ingestion boundary. Generation 3 can also persist canonical source geometry, but the current verified-source bridge still records provenance and geometry through separate lower-level capabilities. A future ingestion operation must combine them before it can claim source identity and feature geometry were acknowledged atomically as one product mutation.
 
 ## 6. Idempotent retry
 
@@ -126,7 +131,7 @@ When another project handle won the identical insertion concurrently, the idempo
 
 ## 7. Bounds and canonical values
 
-The current draft API rejects before mutation:
+The current provenance API rejects before mutation:
 
 - zero capability mask;
 - empty required identity fields;
@@ -150,9 +155,11 @@ Sources enumerate by `source_id`; resources enumerate by `logical_name`. The con
 
 ## 9. Project open-time integrity
 
-Generation-2 `ProjectStore::open` verifies the required source table/column surface before accepting the file and runs `PRAGMA foreign_key_check` in addition to SQLite quick-check and metadata validation.
+Current generation-3 `ProjectStore::open` verifies the required provenance and geometry table/column surfaces before accepting the file and runs `PRAGMA foreign_key_check` in addition to SQLite quick-check and metadata validation.
 
-Only after the external file has passed acceptance does AERIS configure the writable durability PRAGMAs.
+Only after the external file has passed structural acceptance does AERIS configure writable durability PRAGMAs.
+
+Canonical geometry payloads deliberately have a separate deep semantic audit; ordinary Open does not decode every coordinate. See `PROJECT-GEOMETRY.md` for the fast-open versus `verify_integrity()` contract.
 
 ## 10. Multi-handle semantics
 
@@ -185,13 +192,13 @@ After registry success, the bridge additionally requires adapter provenance to d
 
 This extra check is intentional: an adapter result may be internally valid according to the general registry contract while still describing a different acquisition identity than the verified bytes presented to the bridge.
 
-The bridge maps only the selected binding capability bit, adapter temporal class, exact provenance, and verified resource-manifest identity into neutral storage values. It preserves storage's atomic and idempotent mutation semantics.
+The bridge maps only the selected binding capability bit, adapter temporal class, exact provenance, and verified resource-manifest identity into neutral storage values. It preserves storage's atomic and idempotent provenance mutation semantics.
 
 ## 12. Executed bridge proof
 
 Dedicated Project CI builds and tests the composition layer on Ubuntu, Windows, and macOS plus Linux ASan+UBSan.
 
-The current contract tests prove:
+The current bridge contract tests prove:
 
 - verified local bytes pass acquisition verification before the bridge can receive a `VerifiedSnapshot`;
 - the registry is invoked by the bridge rather than bypassed;
@@ -205,8 +212,8 @@ The current contract tests prove:
 
 ## 13. Current non-claims and next boundary
 
-Schema generation 2 and the project bridge do not yet prove or implement canonical feature geometry persistence, layer ordering/configuration, styles, extension payloads, general embedded/external `aeris_resource` storage, frozen/portable projects, source removal/replacement semantics, or viewer source-management UX.
+The current generation-3 container **does implement canonical feature/ring geometry persistence** as a storage-level contract. It still does not implement canonical layer ordering/configuration, styles, extension payloads, general embedded/external `aeris_resource` storage, frozen/portable projects, source removal/replacement semantics, or viewer source-management UX.
 
-Most importantly, a successful provenance bridge operation means **the verified source identity is durably recorded**. It does not mean the adapter's feature geometry has been persisted.
+Most importantly, a successful current provenance bridge operation still means only **the verified source identity is durably recorded**. The bridge has not yet been upgraded to commit the adapter's canonical feature geometry in the same product transaction.
 
-The next persistence boundary should therefore be canonical geographic feature/ring storage tied to an immutable source record. Derived planar projection geometry and globe-view tessellation remain caches/results, not geographic truth.
+The next orchestration boundary must therefore map the already validated adapter result into the neutral generation-3 geometry records and acknowledge provenance + geometry atomically as one source-ingestion mutation. It must not simply call the two lower-level storage APIs sequentially, because that would preserve a crash-visible partial state between two acknowledged transactions.
