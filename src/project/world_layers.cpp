@@ -33,6 +33,16 @@ namespace {
     };
 }
 
+[[nodiscard]] WorldLayerStackResult contract_mismatch(std::string diagnostic) {
+    return {
+        WorldLayerStackError::source_contract_mismatch,
+        storage::StorageError::none,
+        false,
+        false,
+        std::move(diagnostic),
+    };
+}
+
 [[nodiscard]] const storage::SourceSnapshotRecord* find_source(
     const std::vector<storage::SourceSnapshotRecord>& records,
     const std::string& source_id
@@ -58,6 +68,26 @@ namespace {
     request.name = std::move(name);
     request.visible = true;
     return request;
+}
+
+[[nodiscard]] std::vector<std::string> stable_ids(
+    const std::vector<storage::FeatureGeometryIndexEntry>& features
+) {
+    std::vector<std::string> output;
+    output.reserve(features.size());
+    for (const auto& feature : features) output.push_back(feature.stable_id);
+    std::sort(output.begin(), output.end());
+    return output;
+}
+
+[[nodiscard]] std::vector<std::string> stable_ids(
+    const std::vector<storage::FeaturePropertiesIndexEntry>& features
+) {
+    std::vector<std::string> output;
+    output.reserve(features.size());
+    for (const auto& feature : features) output.push_back(feature.stable_id);
+    std::sort(output.begin(), output.end());
+    return output;
 }
 
 }  // namespace
@@ -89,37 +119,25 @@ WorldLayerStackResult initialize_builtin_world_layer_stack(
     const storage::SourceSnapshotRecord* political =
         find_source(snapshots.records, sources.political_source_id);
     if (physical == nullptr || political == nullptr) {
-        return {
-            WorldLayerStackError::source_contract_mismatch,
-            storage::StorageError::none,
-            false,
-            false,
-            "built-in world layer source ID is not present in project provenance",
-        };
+        return contract_mismatch(
+            "built-in world layer source ID is not present in project provenance");
     }
     if (!source::has_capability(physical->capability_bits, source::Capability::land)) {
-        return {
-            WorldLayerStackError::source_contract_mismatch,
-            storage::StorageError::none,
-            false,
-            false,
-            "physical source does not advertise the land capability",
-        };
+        return contract_mismatch(
+            "physical source does not advertise the land capability");
     }
     if (!source::has_capability(political->capability_bits, source::Capability::admin0) ||
         political->worldview.empty()) {
-        return {
-            WorldLayerStackError::source_contract_mismatch,
-            storage::StorageError::none,
-            false,
-            false,
-            "political source requires admin0 capability and explicit worldview provenance",
-        };
+        return contract_mismatch(
+            "political source requires admin0 capability and explicit worldview provenance");
     }
 
     const auto physical_geometry =
         storage::list_source_geometry_index(project, sources.physical_source_id);
     if (!physical_geometry.ok()) {
+        if (physical_geometry.status.error == storage::StorageError::record_not_found) {
+            return contract_mismatch("physical source has no durable feature geometry");
+        }
         return storage_failure(
             physical_geometry.status,
             "could not inspect physical source geometry index"
@@ -128,6 +146,9 @@ WorldLayerStackResult initialize_builtin_world_layer_stack(
     const auto political_geometry =
         storage::list_source_geometry_index(project, sources.political_source_id);
     if (!political_geometry.ok()) {
+        if (political_geometry.status.error == storage::StorageError::record_not_found) {
+            return contract_mismatch("political source has no durable feature geometry");
+        }
         return storage_failure(
             political_geometry.status,
             "could not inspect political source geometry index"
@@ -136,6 +157,10 @@ WorldLayerStackResult initialize_builtin_world_layer_stack(
     const auto political_properties =
         storage::list_source_feature_properties_index(project, sources.political_source_id);
     if (!political_properties.ok()) {
+        if (political_properties.status.error == storage::StorageError::record_not_found) {
+            return contract_mismatch(
+                "political source does not contain a complete durable property channel");
+        }
         return storage_failure(
             political_properties.status,
             "could not inspect political source property index"
@@ -143,35 +168,16 @@ WorldLayerStackResult initialize_builtin_world_layer_stack(
     }
 
     if (physical_geometry.features.empty()) {
-        return {
-            WorldLayerStackError::source_contract_mismatch,
-            storage::StorageError::none,
-            false,
-            false,
-            "physical source has no durable feature geometry",
-        };
+        return contract_mismatch("physical source has no durable feature geometry");
     }
     if (political_geometry.features.empty() ||
         political_properties.features.size() != political_geometry.features.size()) {
-        return {
-            WorldLayerStackError::source_contract_mismatch,
-            storage::StorageError::none,
-            false,
-            false,
-            "political source geometry/property indexes are empty or cardinality-mismatched",
-        };
+        return contract_mismatch(
+            "political source geometry/property indexes are empty or cardinality-mismatched");
     }
-    for (std::size_t index = 0U; index < political_geometry.features.size(); ++index) {
-        if (political_geometry.features[index].stable_id !=
-            political_properties.features[index].stable_id) {
-            return {
-                WorldLayerStackError::source_contract_mismatch,
-                storage::StorageError::none,
-                false,
-                false,
-                "political source geometry/property indexes do not share canonical feature order",
-            };
-        }
+    if (stable_ids(political_geometry.features) != stable_ids(political_properties.features)) {
+        return contract_mismatch(
+            "political source geometry/property indexes do not describe the same stable features");
     }
 
     std::vector<storage::LayerCreateRequest> stack;
