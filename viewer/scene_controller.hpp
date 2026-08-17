@@ -29,15 +29,12 @@ public:
 
     void set_scene_callback(SceneCallback callback);
     void set_busy_callback(BusyCallback callback);
+    void set_world(std::shared_ptr<const source::Result> world);
 
     void request_preview(const SceneRequest& request);
     void request_verified(const SceneRequest& request);
     void cancel();
 
-    // Internal queued-delivery boundary for background scene jobs. The worker
-    // may submit only an immutable result plus the generation that produced it;
-    // stale-generation rejection and all controller/UI state mutation remain
-    // on the controller's owning thread.
     void accept_background_scene(std::uint64_t generation, SceneData scene);
 
 private:
