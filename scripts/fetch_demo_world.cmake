@@ -11,41 +11,46 @@ set(_commit "f1890d9f152c896d250a77557a5751a93d494776")
 set(_physical_base "https://raw.githubusercontent.com/nvkelso/natural-earth-vector/${_commit}/110m_physical")
 set(_cultural_base "https://raw.githubusercontent.com/nvkelso/natural-earth-vector/${_commit}/110m_cultural")
 
-function(aeris_download_verified base name sha256)
+function(aeris_download_with_retry base name)
     set(_target "${DESTINATION}/${name}")
-    message(STATUS "Fetching pinned Natural Earth resource: ${name}")
-    file(DOWNLOAD
-        "${base}/${name}"
-        "${_target}"
-        EXPECTED_HASH "SHA256=${sha256}"
-        TLS_VERIFY ON
-        STATUS _status
-        SHOW_PROGRESS
-    )
-    list(GET _status 0 _code)
-    list(GET _status 1 _message)
-    if(NOT _code EQUAL 0)
+    set(_success FALSE)
+    set(_last_message "unknown download failure")
+    foreach(_attempt RANGE 1 3)
         file(REMOVE "${_target}")
-        message(FATAL_ERROR "Download failed for ${name}: ${_message}")
+        message(STATUS "Fetching Natural Earth resource: ${name} (attempt ${_attempt}/3)")
+        file(DOWNLOAD
+            "${base}/${name}"
+            "${_target}"
+            TLS_VERIFY ON
+            STATUS _status
+            SHOW_PROGRESS
+        )
+        list(GET _status 0 _code)
+        list(GET _status 1 _last_message)
+        if(_code EQUAL 0)
+            set(_success TRUE)
+            break()
+        endif()
+        file(REMOVE "${_target}")
+    endforeach()
+    if(NOT _success)
+        message(FATAL_ERROR "Download failed for ${name} after 3 attempts: ${_last_message}")
+    endif()
+endfunction()
+
+function(aeris_download_verified base name sha256)
+    aeris_download_with_retry("${base}" "${name}")
+    set(_target "${DESTINATION}/${name}")
+    file(SHA256 "${_target}" _actual_sha256)
+    if(NOT _actual_sha256 STREQUAL sha256)
+        file(REMOVE "${_target}")
+        message(FATAL_ERROR
+            "SHA-256 mismatch for ${name}: expected ${sha256}, got ${_actual_sha256}")
     endif()
 endfunction()
 
 function(aeris_download_commit_pinned base name)
-    set(_target "${DESTINATION}/${name}")
-    message(STATUS "Fetching commit-pinned Natural Earth resource: ${name}")
-    file(DOWNLOAD
-        "${base}/${name}"
-        "${_target}"
-        TLS_VERIFY ON
-        STATUS _status
-        SHOW_PROGRESS
-    )
-    list(GET _status 0 _code)
-    list(GET _status 1 _message)
-    if(NOT _code EQUAL 0)
-        file(REMOVE "${_target}")
-        message(FATAL_ERROR "Download failed for ${name}: ${_message}")
-    endif()
+    aeris_download_with_retry("${base}" "${name}")
 endfunction()
 
 aeris_download_verified(
