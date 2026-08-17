@@ -139,6 +139,13 @@ if(TARGET aeris_storage)
     aeris_enable_warnings(aeris_storage_race)
     add_test(NAME project_storage_race COMMAND aeris_storage_race)
 
+    add_executable(aeris_layer_stack_race layer_stack_race.cpp)
+    target_link_libraries(aeris_layer_stack_race PRIVATE AERIS::storage Threads::Threads)
+    target_compile_features(aeris_layer_stack_race PRIVATE cxx_std_17)
+    set_target_properties(aeris_layer_stack_race PROPERTIES CXX_EXTENSIONS OFF)
+    aeris_enable_warnings(aeris_layer_stack_race)
+    add_test(NAME project_storage_layer_stack_race COMMAND aeris_layer_stack_race)
+
     add_executable(aeris_provenance_race provenance_race.cpp)
     target_link_libraries(aeris_provenance_race PRIVATE AERIS::storage Threads::Threads)
     target_compile_features(aeris_provenance_race PRIVATE cxx_std_17)
