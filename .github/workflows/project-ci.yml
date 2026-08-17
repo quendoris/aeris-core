@@ -14,10 +14,12 @@ on:
       - 'src/source/**'
       - 'include/aeris/storage/**'
       - 'src/storage/**'
+      - 'include/aeris/util/text.hpp'
       - 'compat/natural-earth/**'
       - 'tools/project_natural_earth_probe.cpp'
       - 'tests/CMakeLists.txt'
       - 'tests/test_project_source_bridge.cpp'
+      - 'tests/test_project_feature_property_bridge.cpp'
       - '.github/workflows/project-ci.yml'
   pull_request:
     paths:
@@ -28,10 +30,12 @@ on:
       - 'src/source/**'
       - 'include/aeris/storage/**'
       - 'src/storage/**'
+      - 'include/aeris/util/text.hpp'
       - 'compat/natural-earth/**'
       - 'tools/project_natural_earth_probe.cpp'
       - 'tests/CMakeLists.txt'
       - 'tests/test_project_source_bridge.cpp'
+      - 'tests/test_project_feature_property_bridge.cpp'
       - '.github/workflows/project-ci.yml'
 
 permissions:
@@ -100,11 +104,11 @@ jobs:
           -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake
           -DVCPKG_TARGET_TRIPLET=x64-windows
 
-      - name: Build project bridge contract test
-        run: cmake --build build-project --target aeris_test_project_source_bridge --config Release --parallel 2
+      - name: Build project bridge contract tests
+        run: cmake --build build-project --target aeris_test_project_source_bridge aeris_test_project_feature_property_bridge --config Release --parallel 2
 
-      - name: Test project bridge contract
-        run: ctest --test-dir build-project --build-config Release --output-on-failure -R '^project_source_bridge$'
+      - name: Test project bridge contracts
+        run: ctest --test-dir build-project --build-config Release --output-on-failure -R '^(project_source_bridge|project_feature_property_bridge)$'
 
   natural-earth-project:
     name: Natural Earth v5.1.2 / durable project proof
@@ -176,11 +180,11 @@ jobs:
           -DCMAKE_CXX_FLAGS=-fsanitize=address,undefined\ -fno-omit-frame-pointer
           -DCMAKE_EXE_LINKER_FLAGS=-fsanitize=address,undefined
 
-      - name: Build project bridge contract test
-        run: cmake --build build-project-sanitize --target aeris_test_project_source_bridge --parallel 2
+      - name: Build project bridge contract tests
+        run: cmake --build build-project-sanitize --target aeris_test_project_source_bridge aeris_test_project_feature_property_bridge --parallel 2
 
-      - name: Test project bridge contract
+      - name: Test project bridge contracts
         env:
           ASAN_OPTIONS: detect_leaks=1
           UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
-        run: ctest --test-dir build-project-sanitize --output-on-failure -R '^project_source_bridge$'
+        run: ctest --test-dir build-project-sanitize --output-on-failure -R '^(project_source_bridge|project_feature_property_bridge)$'
