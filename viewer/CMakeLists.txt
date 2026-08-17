@@ -7,6 +7,7 @@ add_executable(aeris_viewer
     main.cpp
     main_window.cpp
     map_canvas.cpp
+    render_surface.cpp
     scene_builder.cpp
     scene_controller.cpp
     scene_presentation.cpp
