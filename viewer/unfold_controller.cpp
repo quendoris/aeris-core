@@ -3,6 +3,8 @@
 
 #include "unfold_controller.hpp"
 
+#include "scene_presentation.hpp"
+
 #include <QMetaObject>
 #include <QPointer>
 #include <QRunnable>
@@ -39,6 +41,14 @@ public:
             *world_, camera_longitude_deg_, camera_latitude_deg_, target_mode_,
             [token]() { return token->load(std::memory_order_relaxed); }
         );
+        if (!bundle.canceled && bundle.ok) {
+            apply_source_presentation(bundle.globe_endpoint, *world_);
+            apply_source_presentation(bundle.flat_endpoint, *world_);
+            bundle.ok = bundle.globe_endpoint.ok && bundle.flat_endpoint.ok;
+            if (!bundle.ok && bundle.diagnostic.empty()) {
+                bundle.diagnostic = "source presentation failed for unfold endpoints";
+            }
+        }
 
         QPointer<UnfoldController> target = target_;
         QMetaObject::invokeMethod(
