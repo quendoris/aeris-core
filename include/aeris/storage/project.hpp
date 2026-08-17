@@ -13,9 +13,9 @@
 namespace aeris::storage {
 
 inline constexpr std::uint32_t kProjectApplicationId = 0x41455249U;  // "AERI"
-inline constexpr int kProjectSchemaGeneration = 7;
+inline constexpr int kProjectSchemaGeneration = 8;
 inline constexpr int kDraftFormatMajor = 0;
-inline constexpr int kDraftFormatMinor = 7;
+inline constexpr int kDraftFormatMinor = 8;
 
 struct ProjectMetadata {
     std::string project_uuid;
@@ -38,7 +38,7 @@ struct ProjectCreateOptions {
     std::string producer_version{"0.1.0"};
 
     // Pre-1.0 compatibility field. Structured projection state is authoritative
-    // in generation 7, so creation currently accepts only explicit unspecified
+    // from generation 7 onward, so creation accepts only explicit unspecified
     // here; use set_project_projection() after creation for a concrete model.
     std::string projection_id{"aeris.projection.unspecified"};
     std::string worldview_id{"unspecified"};
