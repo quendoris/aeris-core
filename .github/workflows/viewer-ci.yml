@@ -41,11 +41,22 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends qt6-base-dev
 
-      - name: Fetch exact pinned demo world
+      - name: Fetch exact pinned demo worlds
         run: >-
           cmake
           -DDESTINATION=${{ runner.temp }}/natural-earth-v5.1.2
           -P scripts/fetch_demo_world.cmake
+
+      - name: Record exact admin0 resource identities
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha256sum \
+            ${{ runner.temp }}/natural-earth-v5.1.2/ne_110m_admin_0_countries.shp \
+            ${{ runner.temp }}/natural-earth-v5.1.2/ne_110m_admin_0_countries.dbf \
+            ${{ runner.temp }}/natural-earth-v5.1.2/ne_110m_admin_0_countries.cpg \
+            ${{ runner.temp }}/natural-earth-v5.1.2/ne_110m_admin_0_countries.prj \
+            ${{ runner.temp }}/natural-earth-v5.1.2/ne_110m_admin_0_countries.VERSION.txt
 
       - name: Configure viewer
         run: >-
@@ -80,13 +91,21 @@ jobs:
           --snapshot ${{ runner.temp }}/natural-earth-v5.1.2
           --smoke
 
-      - name: Render verified workbench screenshot
+      - name: Render verified physical workbench screenshot
         env:
           QT_QPA_PLATFORM: offscreen
         run: >-
           ./build-viewer/viewer/aeris_viewer
           --snapshot ${{ runner.temp }}/natural-earth-v5.1.2
           --render ${{ runner.temp }}/aeris-viewer-globe.png
+
+      - name: Render verified political workbench screenshot
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: >-
+          ./build-viewer/viewer/aeris_viewer
+          --snapshot ${{ runner.temp }}/natural-earth-v5.1.2
+          --render-political ${{ runner.temp }}/aeris-viewer-political.png
 
       - name: Render non-normative unfold midpoint screenshot
         env:
@@ -102,6 +121,7 @@ jobs:
           name: aeris-viewer
           path: |
             ${{ runner.temp }}/aeris-viewer-globe.png
+            ${{ runner.temp }}/aeris-viewer-political.png
             ${{ runner.temp }}/aeris-viewer-unfold.png
           if-no-files-found: error
           retention-days: 14
