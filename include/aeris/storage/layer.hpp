@@ -80,6 +80,20 @@ struct LayerStateUpdate final {
     std::optional<bool> visible;
 };
 
+// Initializes an empty project with one complete ordered layer stack in a single
+// acknowledged transaction and one project revision. Input order becomes the
+// canonical ordinal order 0..N-1. Source/resource slot validation, resource
+// promotion and frozen-project invalidation happen inside the same transaction.
+//
+// Exact retry is idempotent: if the complete existing stack is byte-for-byte
+// equivalent to the supplied canonicalized requests, success is returned with
+// changed=false and no revision advance. Any different non-empty existing stack
+// is rejected rather than partially merged with the requested initialization.
+[[nodiscard]] LayerMutationResult initialize_layer_stack(
+    ProjectStore& project,
+    const std::vector<LayerCreateRequest>& layers,
+    std::string_view modified_utc);
+
 // Appends one complete logical layer at the top of the current stack. Source and
 // resource slots are part of the same acknowledged transaction. Resource slots
 // automatically promote their referenced resource to required-for-reproduction;
