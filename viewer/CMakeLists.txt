@@ -6,6 +6,7 @@ find_package(Qt6 REQUIRED COMPONENTS Core Widgets)
 add_executable(aeris_viewer
     main.cpp
     main_window.cpp
+    layer_stack.cpp
     map_canvas.cpp
     render_surface.cpp
     scene_builder.cpp
