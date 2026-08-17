@@ -5,16 +5,20 @@
 
 #include "map_canvas.hpp"
 
+#include <QAbstractItemView>
 #include <QAction>
 #include <QActionGroup>
 #include <QDockWidget>
 #include <QFormLayout>
 #include <QLabel>
+#include <QSignalBlocker>
 #include <QStatusBar>
 #include <QToolBar>
+#include <QTreeWidget>
 #include <QWidget>
 
 #include <algorithm>
+#include <string_view>
 #include <utility>
 
 namespace aeris::viewer {
@@ -38,6 +42,10 @@ constexpr qint64 kUnfoldDurationMs = 1400;
         .arg(value.right(visible_end));
 }
 
+[[nodiscard]] QString latin1_view(const std::string_view value) {
+    return QString::fromLatin1(value.data(), static_cast<qsizetype>(value.size()));
+}
+
 }  // namespace
 
 MainWindow::MainWindow(
@@ -53,6 +61,7 @@ MainWindow::MainWindow(
       world_(initial_content == MapContent::political ? political_world_ : physical_world_),
       controller_(world_, this),
       unfold_controller_(world_, this),
+      layer_stack_(initial_content),
       content_(initial_content) {
     build_workbench();
     apply_theme();
@@ -142,39 +151,66 @@ void MainWindow::build_workbench() {
     unfold_action_->setEnabled(false);
     connect(unfold_action_, &QAction::triggered, this, [this]() { start_unfold(); });
 
-    auto* source_dock = new QDockWidget(QStringLiteral("Source"), this);
-    source_dock->setObjectName(QStringLiteral("sourceDock"));
-    auto* source_widget = new QWidget(source_dock);
-    source_widget->setMinimumWidth(250);
-    auto* source_form = new QFormLayout(source_widget);
-    source_value_ = value_label(source_widget);
-    source_form->addRow(QStringLiteral("Verified"), source_value_);
-    source_dock->setWidget(source_widget);
-    addDockWidget(Qt::RightDockWidgetArea, source_dock);
+    auto* layers_dock = new QDockWidget(QStringLiteral("Layers"), this);
+    layers_dock->setObjectName(QStringLiteral("layersDock"));
+    layer_tree_ = new QTreeWidget(layers_dock);
+    layer_tree_->setHeaderHidden(true);
+    layer_tree_->setRootIsDecorated(false);
+    layer_tree_->setItemsExpandable(false);
+    layer_tree_->setSelectionMode(QAbstractItemView::SingleSelection);
+    layer_tree_->setMinimumWidth(235);
+    layer_tree_->setMinimumHeight(170);
+    layers_dock->setWidget(layer_tree_);
+    addDockWidget(Qt::RightDockWidgetArea, layers_dock);
 
-    auto* view_dock = new QDockWidget(QStringLiteral("View"), this);
-    view_dock->setObjectName(QStringLiteral("viewDock"));
-    auto* view_widget = new QWidget(view_dock);
-    view_widget->setMinimumWidth(250);
-    auto* view_form = new QFormLayout(view_widget);
-    content_value_ = value_label(view_widget);
-    mode_value_ = value_label(view_widget);
-    camera_value_ = value_label(view_widget);
-    geometry_value_ = value_label(view_widget);
-    state_value_ = value_label(view_widget);
+    connect(
+        layer_tree_,
+        &QTreeWidget::itemChanged,
+        this,
+        [this](QTreeWidgetItem* item, const int column) {
+            if (item == nullptr || column != 0) return;
+            const std::string layer_id = item->data(0, Qt::UserRole).toString().toStdString();
+            const bool visible = item->checkState(0) == Qt::Checked;
+            if (!layer_stack_.set_visible(layer_id, visible)) return;
+            apply_layer_state();
+            statusBar()->showMessage(
+                QStringLiteral("%1 layer %2")
+                    .arg(item->text(0))
+                    .arg(visible ? QStringLiteral("enabled") : QStringLiteral("hidden")),
+                1800
+            );
+        }
+    );
+
+    auto* inspector_dock = new QDockWidget(QStringLiteral("Inspector"), this);
+    inspector_dock->setObjectName(QStringLiteral("inspectorDock"));
+    auto* inspector_widget = new QWidget(inspector_dock);
+    inspector_widget->setMinimumWidth(235);
+    auto* inspector_form = new QFormLayout(inspector_widget);
+    source_value_ = value_label(inspector_widget);
+    content_value_ = value_label(inspector_widget);
+    mode_value_ = value_label(inspector_widget);
+    camera_value_ = value_label(inspector_widget);
+    geometry_value_ = value_label(inspector_widget);
+    state_value_ = value_label(inspector_widget);
     content_value_->setText(QString::fromLatin1(map_content_name(content_)));
     mode_value_->setText(QStringLiteral("Globe"));
     camera_value_->setText(QStringLiteral("15.00°, 20.00°"));
     geometry_value_->setText(QStringLiteral("—"));
     state_value_->setText(QStringLiteral("Idle"));
-    view_form->addRow(QStringLiteral("Content"), content_value_);
-    view_form->addRow(QStringLiteral("Mode"), mode_value_);
-    view_form->addRow(QStringLiteral("Camera"), camera_value_);
-    view_form->addRow(QStringLiteral("Geometry"), geometry_value_);
-    view_form->addRow(QStringLiteral("State"), state_value_);
-    view_dock->setWidget(view_widget);
-    addDockWidget(Qt::RightDockWidgetArea, view_dock);
+    inspector_form->addRow(QStringLiteral("Source"), source_value_);
+    inspector_form->addRow(QStringLiteral("Content"), content_value_);
+    inspector_form->addRow(QStringLiteral("Mode"), mode_value_);
+    inspector_form->addRow(QStringLiteral("Camera"), camera_value_);
+    inspector_form->addRow(QStringLiteral("Geometry"), geometry_value_);
+    inspector_form->addRow(QStringLiteral("State"), state_value_);
+    inspector_dock->setWidget(inspector_widget);
+    addDockWidget(Qt::RightDockWidgetArea, inspector_dock);
+    splitDockWidget(layers_dock, inspector_dock, Qt::Vertical);
+    resizeDocks({layers_dock, inspector_dock}, {220, 470}, Qt::Vertical);
 
+    rebuild_layer_tree();
+    apply_layer_state();
     update_source_inspector();
     statusBar()->showMessage(QStringLiteral("Pinned Natural Earth sources loaded and verified"));
     update_unfold_action();
@@ -189,6 +225,9 @@ void MainWindow::apply_theme() {
         QToolButton:disabled { color: #777d86; background: #202329; }
         QDockWidget { color: #d9dcd7; }
         QDockWidget::title { background: #202329; padding: 7px; }
+        QTreeWidget { background: #202329; border: none; outline: none; padding: 5px; }
+        QTreeWidget::item { padding: 7px 4px; border-radius: 4px; }
+        QTreeWidget::item:selected { background: #303640; color: #f0f1ed; }
         QLabel { background: transparent; }
         QStatusBar { background: #202329; color: #aeb4bd; }
     )"));
@@ -200,11 +239,14 @@ void MainWindow::set_content(const MapContent content) {
 
     cancel_unfold_activity();
     content_ = content;
+    layer_stack_.set_content(content_);
     world_ = content_ == MapContent::political ? political_world_ : physical_world_;
     controller_.set_world(world_);
     unfold_controller_.set_world(world_);
     select_content_action(content_);
     content_value_->setText(QString::fromLatin1(map_content_name(content_)));
+    rebuild_layer_tree();
+    apply_layer_state();
     update_source_inspector();
     scene_verified_ = false;
     statusBar()->showMessage(
@@ -346,6 +388,7 @@ void MainWindow::present_scene(SceneData scene) {
     }
     update_inspector(scene);
     canvas_->set_scene(std::move(scene));
+    apply_layer_state();
     update_unfold_action();
 }
 
@@ -364,6 +407,27 @@ void MainWindow::present_unfold_frame(UnfoldBundle bundle, const double progress
         QStringLiteral("Transition %1% (non-normative)")
             .arg(static_cast<int>(std::clamp(progress, 0.0, 1.0) * 100.0))
     );
+}
+
+void MainWindow::rebuild_layer_tree() {
+    if (layer_tree_ == nullptr) return;
+    const QSignalBlocker blocker(layer_tree_);
+    layer_tree_->clear();
+    for (const LayerDescriptor& layer : layer_stack_.active_layers()) {
+        auto* item = new QTreeWidgetItem(layer_tree_);
+        item->setText(0, latin1_view(layer.name));
+        item->setData(0, Qt::UserRole, latin1_view(layer.layer_id));
+        item->setCheckState(0, layer.visible ? Qt::Checked : Qt::Unchecked);
+        item->setToolTip(
+            0,
+            QStringLiteral("role: %1").arg(latin1_view(layer.role_id))
+        );
+        item->setFlags(item->flags() | Qt::ItemIsUserCheckable | Qt::ItemIsSelectable);
+    }
+}
+
+void MainWindow::apply_layer_state() {
+    if (canvas_ != nullptr) canvas_->set_layer_render_state(layer_stack_.render_state());
 }
 
 void MainWindow::apply_scene_busy(const bool busy) {
@@ -404,6 +468,7 @@ void MainWindow::set_view_actions_enabled(const bool enabled) {
     globe_action_->setEnabled(enabled);
     sinusoidal_action_->setEnabled(enabled);
     mollweide_action_->setEnabled(enabled);
+    if (layer_tree_ != nullptr) layer_tree_->setEnabled(enabled);
     if (!enabled) unfold_action_->setEnabled(false);
     else update_unfold_action();
 }
