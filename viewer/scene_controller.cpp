@@ -4,6 +4,7 @@
 #include "scene_controller.hpp"
 
 #include "scene_builder.hpp"
+#include "scene_presentation.hpp"
 
 #include <QMetaObject>
 #include <QPointer>
@@ -34,18 +35,16 @@ public:
     void run() override {
         const auto token = canceled_;
         SceneData scene = build_scene(
-            *world_,
-            request_,
+            *world_, request_,
             [token]() { return token->load(std::memory_order_relaxed); }
         );
+        if (!scene.canceled) apply_source_presentation(scene, *world_);
 
         QPointer<SceneController> target = target_;
         QMetaObject::invokeMethod(
             target_,
             [target, generation = generation_, scene = std::move(scene)]() mutable {
-                if (target) {
-                    target->accept_background_scene(generation, std::move(scene));
-                }
+                if (target) target->accept_background_scene(generation, std::move(scene));
             },
             Qt::QueuedConnection
         );
@@ -89,9 +88,7 @@ void SceneController::set_world(std::shared_ptr<const source::Result> world) {
 }
 
 void SceneController::cancel() {
-    if (cancel_token_) {
-        cancel_token_->store(true, std::memory_order_relaxed);
-    }
+    if (cancel_token_) cancel_token_->store(true, std::memory_order_relaxed);
     ++generation_;
 }
 
@@ -99,6 +96,7 @@ void SceneController::request_preview(const SceneRequest& request) {
     cancel();
     if (busy_callback_) busy_callback_(false);
     SceneData scene = build_scene(*world_, request);
+    apply_source_presentation(scene, *world_);
     if (scene_callback_) scene_callback_(std::move(scene));
 }
 
@@ -109,8 +107,7 @@ void SceneController::request_verified(const SceneRequest& request) {
     if (busy_callback_) busy_callback_(true);
 
     pool_.start(new SceneTask(
-        QPointer<SceneController>(this),
-        world_, request, cancel_token_, generation
+        QPointer<SceneController>(this), world_, request, cancel_token_, generation
     ));
 }
 
