@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "aeris/storage/project.hpp"
 
+#include "geometry_detail.hpp"
 #include "sqlite_detail.hpp"
 
 #include <array>
@@ -570,7 +571,8 @@ Status ProjectStore::verify_integrity() const {
     if (!(status = validate_identity(impl_->db.get()))) return status;
     ProjectMetadata metadata;
     if (!(status = load_metadata(impl_->db.get(), metadata))) return status;
-    return validate_schema_surface(impl_->db.get());
+    if (!(status = validate_schema_surface(impl_->db.get()))) return status;
+    return detail::verify_geometry_semantics(*this);
 }
 
 }  // namespace aeris::storage
