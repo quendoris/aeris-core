@@ -15,6 +15,7 @@ on:
       - 'tests/test_provenance.cpp'
       - 'tests/test_geometry_storage.cpp'
       - 'tests/test_geometry_corruption.cpp'
+      - 'tests/test_dataset_storage.cpp'
       - 'tests/provenance_race.cpp'
       - 'tests/storage_abrupt.cpp'
       - 'tests/storage_race.cpp'
@@ -29,6 +30,7 @@ on:
       - 'tests/test_provenance.cpp'
       - 'tests/test_geometry_storage.cpp'
       - 'tests/test_geometry_corruption.cpp'
+      - 'tests/test_dataset_storage.cpp'
       - 'tests/provenance_race.cpp'
       - 'tests/storage_abrupt.cpp'
       - 'tests/storage_race.cpp'
@@ -87,7 +89,7 @@ jobs:
           -DVCPKG_TARGET_TRIPLET=x64-windows
 
       - name: Build storage contract tests
-        run: cmake --build build-storage --target aeris_test_storage aeris_test_provenance aeris_test_geometry_storage aeris_test_geometry_corruption aeris_storage_abrupt aeris_storage_race aeris_provenance_race --config Release --parallel 2
+        run: cmake --build build-storage --target aeris_test_storage aeris_test_provenance aeris_test_geometry_storage aeris_test_geometry_corruption aeris_test_dataset_storage aeris_storage_abrupt aeris_storage_race aeris_provenance_race --config Release --parallel 2
 
       - name: Test storage contract
         run: ctest --test-dir build-storage --build-config Release --output-on-failure -R '^project_storage'
@@ -115,7 +117,7 @@ jobs:
           -DCMAKE_EXE_LINKER_FLAGS=-fsanitize=address,undefined
 
       - name: Build storage contract tests
-        run: cmake --build build-storage-sanitize --target aeris_test_storage aeris_test_provenance aeris_test_geometry_storage aeris_test_geometry_corruption aeris_storage_abrupt aeris_storage_race aeris_provenance_race --parallel 2
+        run: cmake --build build-storage-sanitize --target aeris_test_storage aeris_test_provenance aeris_test_geometry_storage aeris_test_geometry_corruption aeris_test_dataset_storage aeris_storage_abrupt aeris_storage_race aeris_provenance_race --parallel 2
 
       - name: Test storage contract
         env:
