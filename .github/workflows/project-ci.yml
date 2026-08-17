@@ -17,6 +17,7 @@ on:
       - 'include/aeris/util/text.hpp'
       - 'compat/natural-earth/**'
       - 'tools/project_natural_earth_probe.cpp'
+      - 'tools/project_natural_earth_admin0_probe.cpp'
       - 'tests/CMakeLists.txt'
       - 'tests/test_project_source_bridge.cpp'
       - 'tests/test_project_feature_property_bridge.cpp'
@@ -33,6 +34,7 @@ on:
       - 'include/aeris/util/text.hpp'
       - 'compat/natural-earth/**'
       - 'tools/project_natural_earth_probe.cpp'
+      - 'tools/project_natural_earth_admin0_probe.cpp'
       - 'tests/CMakeLists.txt'
       - 'tests/test_project_source_bridge.cpp'
       - 'tests/test_project_feature_property_bridge.cpp'
@@ -155,6 +157,57 @@ jobs:
             "$RUNNER_TEMP/natural-earth-v5.1.2" \
             compat/natural-earth/ne_110m_land-v5.1.2 \
             "$RUNNER_TEMP/natural-earth-v5.1.2.aeris" \
+            "$retrieved_at"
+
+  natural-earth-admin0-project:
+    name: Natural Earth v5.1.2 / durable admin0 property proof
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install SQLite development package
+        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
+
+      - name: Fetch exact pinned admin0 bytes
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/natural-earth-admin0-v5.1.2"
+          mkdir -p "$root"
+          base="https://raw.githubusercontent.com/nvkelso/natural-earth-vector/f1890d9f152c896d250a77557a5751a93d494776/110m_cultural"
+          for file in \
+            ne_110m_admin_0_countries.shp \
+            ne_110m_admin_0_countries.dbf \
+            ne_110m_admin_0_countries.cpg \
+            ne_110m_admin_0_countries.prj \
+            ne_110m_admin_0_countries.VERSION.txt; do
+            curl --proto '=https' --tlsv1.2 --fail --location --retry 3 \
+              --output "$root/$file" "$base/$file"
+          done
+
+      - name: Configure admin0 durable project proof
+        run: >-
+          cmake -S . -B build-project-admin0
+          -DAERIS_BUILD_STORAGE=ON
+          -DAERIS_BUILD_PROJECT=ON
+          -DAERIS_BUILD_TESTS=OFF
+          -DAERIS_BUILD_TOOLS=ON
+          -DAERIS_WARNINGS_AS_ERRORS=ON
+          -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build admin0 durable project proof
+        run: cmake --build build-project-admin0 --target aeris_project_natural_earth_admin0_probe --parallel 2
+
+      - name: Verify, persist, reopen, and compare complete admin0 properties
+        shell: bash
+        run: |
+          set -euo pipefail
+          retrieved_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          ./build-project-admin0/aeris_project_natural_earth_admin0_probe \
+            "$RUNNER_TEMP/natural-earth-admin0-v5.1.2" \
+            "$RUNNER_TEMP/natural-earth-admin0-v5.1.2.aeris" \
             "$retrieved_at"
 
   sanitizers:
