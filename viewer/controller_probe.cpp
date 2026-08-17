@@ -39,11 +39,8 @@ namespace {
     int verified_callbacks = 0;
 
     controller.set_busy_callback([&](const bool busy) {
-        if (busy) {
-            busy_seen = true;
-        } else if (busy_seen) {
-            ready_after_busy_seen = true;
-        }
+        if (busy) busy_seen = true;
+        else if (busy_seen) ready_after_busy_seen = true;
     });
 
     controller.set_scene_callback([&](aeris::viewer::SceneData scene) {
@@ -127,6 +124,75 @@ namespace {
     return true;
 }
 
+[[nodiscard]] bool run_source_switch_lifecycle(
+    const std::shared_ptr<const aeris::source::Result>& physical,
+    const std::shared_ptr<const aeris::source::Result>& political
+) {
+    aeris::viewer::SceneController controller(physical);
+    QEventLoop wait_for_political;
+    QTimer timeout;
+    timeout.setSingleShot(true);
+
+    bool timed_out = false;
+    bool wrong_scene_delivered = false;
+    bool political_seen = false;
+    int callbacks = 0;
+
+    controller.set_scene_callback([&](aeris::viewer::SceneData scene) {
+        ++callbacks;
+        if (scene.ok &&
+            scene.quality == aeris::viewer::SceneQuality::verified &&
+            scene.mode == aeris::viewer::ViewMode::globe &&
+            scene.political &&
+            scene.features.size() == political->features.size() &&
+            near(scene.camera_longitude_deg, 25.0) &&
+            near(scene.camera_latitude_deg, 15.0)) {
+            political_seen = true;
+        } else {
+            wrong_scene_delivered = true;
+        }
+        wait_for_political.quit();
+    });
+    QObject::connect(&timeout, &QTimer::timeout, [&]() {
+        timed_out = true;
+        wait_for_political.quit();
+    });
+
+    aeris::viewer::SceneRequest physical_request{};
+    physical_request.mode = aeris::viewer::ViewMode::globe;
+    physical_request.quality = aeris::viewer::SceneQuality::verified;
+    physical_request.camera_longitude_deg = 5.0;
+    physical_request.camera_latitude_deg = 5.0;
+    controller.request_verified(physical_request);
+
+    // The physical job may already be computing, but set_world() must invalidate
+    // its generation before switching immutable source ownership.
+    controller.set_world(political);
+
+    aeris::viewer::SceneRequest political_request{};
+    political_request.mode = aeris::viewer::ViewMode::globe;
+    political_request.quality = aeris::viewer::SceneQuality::verified;
+    political_request.camera_longitude_deg = 25.0;
+    political_request.camera_latitude_deg = 15.0;
+    controller.request_verified(political_request);
+
+    timeout.start(120'000);
+    wait_for_political.exec();
+    timeout.stop();
+    controller.cancel();
+
+    if (timed_out || wrong_scene_delivered || !political_seen || callbacks != 1) {
+        std::cerr
+            << "source switch lifecycle failed: timeout=" << timed_out
+            << " wrong_scene=" << wrong_scene_delivered
+            << " political_seen=" << political_seen
+            << " callbacks=" << callbacks
+            << '\n';
+        return false;
+    }
+    return true;
+}
+
 [[nodiscard]] bool run_unfold_lifecycle(
     const std::shared_ptr<const aeris::source::Result>& world
 ) {
@@ -143,11 +209,8 @@ namespace {
     int bundle_callbacks = 0;
 
     controller.set_busy_callback([&](const bool busy) {
-        if (busy) {
-            busy_seen = true;
-        } else if (busy_seen) {
-            ready_after_busy_seen = true;
-        }
+        if (busy) busy_seen = true;
+        else if (busy_seen) ready_after_busy_seen = true;
     });
     controller.set_bundle_callback([&](aeris::viewer::UnfoldBundle bundle) {
         ++bundle_callbacks;
@@ -190,9 +253,7 @@ namespace {
         wait_for_final.quit();
     });
 
-    // Generation A must be canceled before it can become presentation state.
     controller.request(15.0, 20.0, aeris::viewer::ViewMode::mollweide);
-    // Generation B is the only unfold bundle allowed through the callback.
     controller.request(45.0, 10.0, aeris::viewer::ViewMode::sinusoidal);
 
     timeout.start(180'000);
@@ -229,24 +290,26 @@ int main(int argc, char** argv) {
 
     QCoreApplication application(argc, argv);
 
-    auto loaded = aeris::viewer::load_pinned_demo_world(
+    auto worlds = aeris::viewer::load_pinned_workbench_worlds(
         snapshot,
         "viewer-controller-probe"
     );
-    if (!loaded.ok()) {
+    if (!worlds.ok()) {
         std::cerr << "controller probe source load failed: "
-                  << loaded.diagnostic << '\n';
+                  << worlds.diagnostic << '\n';
         return EXIT_FAILURE;
     }
 
-    if (!run_scene_lifecycle(loaded.world) ||
-        !run_unfold_lifecycle(loaded.world)) {
+    if (!run_scene_lifecycle(worlds.physical) ||
+        !run_source_switch_lifecycle(worlds.physical, worlds.political) ||
+        !run_unfold_lifecycle(worlds.physical)) {
         return EXIT_FAILURE;
     }
 
     std::cout
         << "viewer_controller_probe: PASS\n"
         << "scene stale generation delivered: no\n"
+        << "physical-to-political stale source delivered: no\n"
         << "unfold stale generation delivered: no\n";
     return EXIT_SUCCESS;
 }
