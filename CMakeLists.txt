@@ -81,6 +81,7 @@ if(AERIS_BUILD_STORAGE)
         src/storage/session.cpp
         src/storage/provenance.cpp
         src/storage/geometry.cpp
+        src/storage/dataset.cpp
     )
     add_library(AERIS::storage ALIAS aeris_storage)
     target_include_directories(aeris_storage
