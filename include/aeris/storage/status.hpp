@@ -21,6 +21,7 @@ enum class StorageError {
     session_project_mismatch,
     integrity_failed,
     record_exists,
+    record_not_found,
 };
 
 struct Status {
