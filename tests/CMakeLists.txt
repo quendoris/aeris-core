@@ -165,6 +165,11 @@ if(TARGET aeris_project)
         test_project_feature_property_bridge.cpp
         project_feature_property_bridge
     )
+    aeris_add_project_test(
+        aeris_test_project_world_layers
+        test_project_world_layers.cpp
+        project_world_layers
+    )
 endif()
 
 if(TARGET aeris_diagnostic_svg)
