@@ -202,7 +202,8 @@ Status read_marker(
         return {StorageError::schema_invalid,
                 "feature property source marker is not unique"};
     }
-    if (model != kFeaturePropertiesModelId || encoding != kFeaturePropertiesEncodingId ||
+    if (std::string_view(model) != kFeaturePropertiesModelId ||
+        std::string_view(encoding) != kFeaturePropertiesEncodingId ||
         count < 0 || count > static_cast<sqlite3_int64>(kMaxFeaturesPerSource)) {
         return {StorageError::schema_invalid,
                 "feature property marker violates canonical model/encoding/count"};
@@ -235,7 +236,7 @@ Status decode_property(
                 "feature property payload bytes are unavailable"};
     }
 
-    if (type_id == kFeaturePropertyBoolTypeId) {
+    if (std::string_view(type_id) == kFeaturePropertyBoolTypeId) {
         if (size != 1U || (bytes[0] != 0U && bytes[0] != 1U)) {
             return {StorageError::schema_invalid,
                     "feature bool property is not canonical one-byte 0/1"};
@@ -243,39 +244,42 @@ Status decode_property(
         property.value = bytes[0] == 1U;
         return Status::success();
     }
-    if (type_id == kFeaturePropertyInt64LeTypeId) {
+    if (std::string_view(type_id) == kFeaturePropertyInt64LeTypeId) {
         if (size != 8U) {
             return {StorageError::schema_invalid,
                     "feature int64 property is not canonical eight-byte LE"};
         }
-        property.value = static_cast<std::int64_t>(decode_u64le(bytes));
+        const std::uint64_t bits = decode_u64le(bytes);
+        std::int64_t signed_value = 0;
+        std::memcpy(&signed_value, &bits, sizeof(signed_value));
+        property.value = signed_value;
         return Status::success();
     }
-    if (type_id == kFeaturePropertyF64LeTypeId) {
+    if (std::string_view(type_id) == kFeaturePropertyF64LeTypeId) {
         if (size != 8U) {
             return {StorageError::schema_invalid,
                     "feature f64 property is not canonical eight-byte LE"};
         }
-        const double value = decode_f64le(bytes);
-        if (!std::isfinite(value) || (value == 0.0 && std::signbit(value))) {
+        const double real_value = decode_f64le(bytes);
+        if (!std::isfinite(real_value) || (real_value == 0.0 && std::signbit(real_value))) {
             return {StorageError::schema_invalid,
                     "feature f64 property is non-finite or negative zero"};
         }
-        property.value = value;
+        property.value = real_value;
         return Status::success();
     }
-    if (type_id == kFeaturePropertyUtf8TypeId) {
+    if (std::string_view(type_id) == kFeaturePropertyUtf8TypeId) {
         if (size > kMaxFeaturePropertyTextBytes) {
             return {StorageError::schema_invalid,
                     "feature UTF-8 property exceeds draft payload bound"};
         }
         const char* chars = size == 0U ? "" : reinterpret_cast<const char*>(bytes);
-        std::string value(chars, size);
-        if (!util::is_valid_utf8_nul_free(value)) {
+        std::string text_value(chars, size);
+        if (!util::is_valid_utf8_nul_free(text_value)) {
             return {StorageError::schema_invalid,
                     "feature UTF-8 property is malformed or contains NUL"};
         }
-        property.value = std::move(value);
+        property.value = std::move(text_value);
         return Status::success();
     }
     return {StorageError::schema_invalid,
@@ -404,24 +408,26 @@ Status insert_feature_properties(
             std::string text_payload;
             unsigned char bool_payload = 0U;
 
-            if (const auto* value = std::get_if<bool>(&property.value)) {
+            if (const auto* bool_value = std::get_if<bool>(&property.value)) {
                 type_id = kFeaturePropertyBoolTypeId;
-                bool_payload = *value ? 1U : 0U;
+                bool_payload = *bool_value ? 1U : 0U;
                 payload = &bool_payload;
                 payload_size = 1U;
-            } else if (const auto* value = std::get_if<std::int64_t>(&property.value)) {
+            } else if (const auto* integer_value = std::get_if<std::int64_t>(&property.value)) {
                 type_id = kFeaturePropertyInt64LeTypeId;
-                fixed = encode_u64le(static_cast<std::uint64_t>(*value));
+                std::uint64_t bits = 0U;
+                std::memcpy(&bits, integer_value, sizeof(bits));
+                fixed = encode_u64le(bits);
                 payload = fixed.data();
                 payload_size = fixed.size();
-            } else if (const auto* value = std::get_if<double>(&property.value)) {
+            } else if (const auto* real_value = std::get_if<double>(&property.value)) {
                 type_id = kFeaturePropertyF64LeTypeId;
-                fixed = encode_f64le(*value);
+                fixed = encode_f64le(*real_value);
                 payload = fixed.data();
                 payload_size = fixed.size();
-            } else if (const auto* value = std::get_if<std::string>(&property.value)) {
+            } else if (const auto* string_value = std::get_if<std::string>(&property.value)) {
                 type_id = kFeaturePropertyUtf8TypeId;
-                text_payload = *value;
+                text_payload = *string_value;
                 payload = text_payload.data();
                 payload_size = text_payload.size();
             } else {
