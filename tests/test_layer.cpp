@@ -126,8 +126,8 @@ void test_layer_graph_and_portability() {
     ProjectStore* project = fixture.project();
     expect_true("layer project creates", project != nullptr);
     if (project == nullptr) return;
-    expect_true("generation 5 project advertises draft 0.5",
-                project->metadata().format_major == 0 && project->metadata().format_minor == 5);
+    expect_true("generation 6 project advertises draft 0.6",
+                project->metadata().format_major == 0 && project->metadata().format_minor == 6);
 
     const SourceSnapshotRecord source = source_record();
     const auto source_insert = store_source_snapshot(
