@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <string>
 #include <string_view>
+#include <variant>
 #include <vector>
 
 namespace aeris::source {
@@ -87,10 +88,18 @@ struct FeatureRing final {
     RingRole role = RingRole::exterior;
 };
 
+using FeaturePropertyValue = std::variant<bool, std::int64_t, double, std::string>;
+
+struct FeatureProperty final {
+    std::string key;
+    FeaturePropertyValue value;
+};
+
 struct Feature final {
     std::string stable_id;
     std::string source_id;
     std::vector<FeatureRing> rings;
+    std::vector<FeatureProperty> properties;
 };
 
 struct Request final {
@@ -102,6 +111,13 @@ struct Request final {
 struct Result final {
     Provenance provenance{};
     std::vector<Feature> features;
+
+    // False means this adapter did not provide a complete feature-attribute
+    // channel for this load. In that state every Feature::properties list must
+    // be empty, so partial attributes can never be mistaken for complete data.
+    // True makes each feature list authoritative, including verified-empty lists.
+    bool feature_properties_complete = false;
+
     SourceError error = SourceError::none;
     std::string diagnostic;
 
