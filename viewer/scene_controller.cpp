@@ -44,10 +44,7 @@ public:
             target_,
             [target, generation = generation_, scene = std::move(scene)]() mutable {
                 if (target) {
-                    target->accept_background_scene(
-                        generation,
-                        std::move(scene)
-                    );
+                    target->accept_background_scene(generation, std::move(scene));
                 }
             },
             Qt::QueuedConnection
@@ -85,6 +82,12 @@ void SceneController::set_busy_callback(BusyCallback callback) {
     busy_callback_ = std::move(callback);
 }
 
+void SceneController::set_world(std::shared_ptr<const source::Result> world) {
+    cancel();
+    world_ = std::move(world);
+    if (busy_callback_) busy_callback_(false);
+}
+
 void SceneController::cancel() {
     if (cancel_token_) {
         cancel_token_->store(true, std::memory_order_relaxed);
@@ -94,31 +97,20 @@ void SceneController::cancel() {
 
 void SceneController::request_preview(const SceneRequest& request) {
     cancel();
-    if (busy_callback_) {
-        busy_callback_(false);
-    }
-
+    if (busy_callback_) busy_callback_(false);
     SceneData scene = build_scene(*world_, request);
-    if (scene_callback_) {
-        scene_callback_(std::move(scene));
-    }
+    if (scene_callback_) scene_callback_(std::move(scene));
 }
 
 void SceneController::request_verified(const SceneRequest& request) {
     cancel();
     const std::uint64_t generation = generation_;
     cancel_token_ = std::make_shared<std::atomic_bool>(false);
-
-    if (busy_callback_) {
-        busy_callback_(true);
-    }
+    if (busy_callback_) busy_callback_(true);
 
     pool_.start(new SceneTask(
         QPointer<SceneController>(this),
-        world_,
-        request,
-        cancel_token_,
-        generation
+        world_, request, cancel_token_, generation
     ));
 }
 
@@ -126,15 +118,9 @@ void SceneController::accept_background_scene(
     const std::uint64_t generation,
     SceneData scene
 ) {
-    if (generation != generation_ || scene.canceled) {
-        return;
-    }
-    if (busy_callback_) {
-        busy_callback_(false);
-    }
-    if (scene_callback_) {
-        scene_callback_(std::move(scene));
-    }
+    if (generation != generation_ || scene.canceled) return;
+    if (busy_callback_) busy_callback_(false);
+    if (scene_callback_) scene_callback_(std::move(scene));
 }
 
 }  // namespace aeris::viewer
