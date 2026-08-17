@@ -49,10 +49,6 @@ function(aeris_download_verified base name sha256)
     endif()
 endfunction()
 
-function(aeris_download_commit_pinned base name)
-    aeris_download_with_retry("${base}" "${name}")
-endfunction()
-
 aeris_download_verified(
     "${_physical_base}"
     "ne_110m_land.shp"
@@ -69,15 +65,31 @@ aeris_download_verified(
     "3b10b6ad566eadbcacadb33c591f1ec629593d6adf47442e56e0f61996829ef7"
 )
 
-foreach(_admin0_file IN ITEMS
-    ne_110m_admin_0_countries.shp
-    ne_110m_admin_0_countries.dbf
-    ne_110m_admin_0_countries.cpg
-    ne_110m_admin_0_countries.prj
-    ne_110m_admin_0_countries.VERSION.txt
+aeris_download_verified(
+    "${_cultural_base}"
+    "ne_110m_admin_0_countries.shp"
+    "08e341606e8391e458c3f08deb312de664b56bfae376064c5aa0aee6681a5f55"
 )
-    aeris_download_commit_pinned("${_cultural_base}" "${_admin0_file}")
-endforeach()
+aeris_download_verified(
+    "${_cultural_base}"
+    "ne_110m_admin_0_countries.dbf"
+    "1fee677cd4e03b367876e03861eb10197e4022a846bf92060e0313432863785b"
+)
+aeris_download_verified(
+    "${_cultural_base}"
+    "ne_110m_admin_0_countries.cpg"
+    "3ad3031f5503a4404af825262ee8232cc04d4ea6683d42c5dd0a2f2a27ac9824"
+)
+aeris_download_verified(
+    "${_cultural_base}"
+    "ne_110m_admin_0_countries.prj"
+    "3259f0e55290a82b1350646f604e8a7ee1e2136c0320a40fad838ab40819fff8"
+)
+aeris_download_verified(
+    "${_cultural_base}"
+    "ne_110m_admin_0_countries.VERSION.txt"
+    "f9893302cd3158f3b5aea394dcd2a91574869e9e6ff69e9235b10a3bf8c983fb"
+)
 
 message(STATUS "Pinned AERIS physical + political demo world is ready at ${DESTINATION}")
-message(STATUS "The viewer independently verifies the admin0 aggregate content SHA-256 before use.")
+message(STATUS "Every resource is commit-pinned and verified by exact SHA-256; the viewer also verifies aggregate source identities before use.")
