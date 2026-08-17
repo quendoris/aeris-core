@@ -21,6 +21,7 @@ on:
       - 'tests/CMakeLists.txt'
       - 'tests/test_project_source_bridge.cpp'
       - 'tests/test_project_feature_property_bridge.cpp'
+      - 'tests/test_project_world_layers.cpp'
       - '.github/workflows/project-ci.yml'
   pull_request:
     paths:
@@ -38,6 +39,7 @@ on:
       - 'tests/CMakeLists.txt'
       - 'tests/test_project_source_bridge.cpp'
       - 'tests/test_project_feature_property_bridge.cpp'
+      - 'tests/test_project_world_layers.cpp'
       - '.github/workflows/project-ci.yml'
 
 permissions:
@@ -107,10 +109,10 @@ jobs:
           -DVCPKG_TARGET_TRIPLET=x64-windows
 
       - name: Build project bridge contract tests
-        run: cmake --build build-project --target aeris_test_project_source_bridge aeris_test_project_feature_property_bridge --config Release --parallel 2
+        run: cmake --build build-project --target aeris_test_project_source_bridge aeris_test_project_feature_property_bridge aeris_test_project_world_layers --config Release --parallel 2
 
       - name: Test project bridge contracts
-        run: ctest --test-dir build-project --build-config Release --output-on-failure -R '^(project_source_bridge|project_feature_property_bridge)$'
+        run: ctest --test-dir build-project --build-config Release --output-on-failure -R '^(project_source_bridge|project_feature_property_bridge|project_world_layers)$'
 
   natural-earth-project:
     name: Natural Earth v5.1.2 / durable project proof
@@ -234,10 +236,10 @@ jobs:
           -DCMAKE_EXE_LINKER_FLAGS=-fsanitize=address,undefined
 
       - name: Build project bridge contract tests
-        run: cmake --build build-project-sanitize --target aeris_test_project_source_bridge aeris_test_project_feature_property_bridge --parallel 2
+        run: cmake --build build-project-sanitize --target aeris_test_project_source_bridge aeris_test_project_feature_property_bridge aeris_test_project_world_layers --parallel 2
 
       - name: Test project bridge contracts
         env:
           ASAN_OPTIONS: detect_leaks=1
           UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
-        run: ctest --test-dir build-project-sanitize --output-on-failure -R '^(project_source_bridge|project_feature_property_bridge)$'
+        run: ctest --test-dir build-project-sanitize --output-on-failure -R '^(project_source_bridge|project_feature_property_bridge|project_world_layers)$'
