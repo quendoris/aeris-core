@@ -18,7 +18,6 @@ namespace {
 
 constexpr std::size_t kMaxIdentifierBytes = 255U;
 constexpr std::size_t kMaxLayerNameBytes = 1024U;
-constexpr sqlite3_int64 kTemporaryOrdinalOffset = 1'000'000;
 
 [[nodiscard]] bool bounded_text(
     const std::string& value,
