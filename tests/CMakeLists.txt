@@ -82,6 +82,15 @@ if(TARGET aeris_storage)
     # primitive and deliberately corrupt SQLite chunk payloads below the public API.
     target_link_libraries(aeris_test_resource PRIVATE AERIS::hash ${AERIS_SQLITE_TARGET})
 
+    aeris_add_storage_test(
+        aeris_test_layer
+        test_layer.cpp
+        project_storage_layer
+    )
+    # The layer contract uses the shared hash fixture helper and deliberately
+    # mutates SQLite below the API to prove deep graph integrity rejection.
+    target_link_libraries(aeris_test_layer PRIVATE AERIS::hash ${AERIS_SQLITE_TARGET})
+
     add_executable(aeris_storage_abrupt storage_abrupt.cpp)
     target_link_libraries(aeris_storage_abrupt PRIVATE AERIS::storage)
     target_compile_features(aeris_storage_abrupt PRIVATE cxx_std_17)
