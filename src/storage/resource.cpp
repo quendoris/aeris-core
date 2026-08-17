@@ -38,7 +38,8 @@ constexpr std::uint64_t kMaxEmbeddedResourceBytes =
 
 [[nodiscard]] bool valid_media_type(const std::string& value) noexcept {
     if (!bounded_text(value, kMaxMediaTypeBytes)) return false;
-    for (const unsigned char c : value) {
+    for (const char raw : value) {
+        const unsigned char c = static_cast<unsigned char>(raw);
         if (c < 0x20U || c == 0x7fU) return false;
     }
     return true;
