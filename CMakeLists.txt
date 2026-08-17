@@ -12,6 +12,7 @@ option(AERIS_BUILD_STORAGE "Build SQLite-backed AERIS project/session storage" O
 # Project orchestration is the explicit verified composition layer over core/source + storage.
 # Enabling it must never make SQLite a dependency of AERIS::core itself; configure and
 # Project CI both enforce that storage is explicitly enabled for this composition layer.
+# This boundary is intentionally exercised as part of the final same-SHA project checkpoint.
 option(AERIS_BUILD_PROJECT "Build AERIS project orchestration over core and storage" OFF)
 # Keep the GUI opt-in so the reference core never acquires a transitive Qt
 # requirement merely because a frontend exists in the same repository.
