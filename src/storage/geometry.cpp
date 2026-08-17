@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "aeris/storage/geometry.hpp"
 
+#include "geometry_detail.hpp"
 #include "sqlite_detail.hpp"
 
 #include <algorithm>
@@ -762,5 +763,53 @@ FeatureGeometryLoadResult load_feature_geometry(
     result.status = Status::success();
     return result;
 }
+
+namespace detail {
+
+Status verify_geometry_semantics(const ProjectStore& project) {
+    DbPtr db;
+    Status status = open_database(project.path(), SQLITE_OPEN_READONLY, db);
+    if (!status) return status;
+    if (!(status = validate_project_connection(db.get(), project))) return status;
+
+    StmtPtr source_stmt;
+    status = prepare(
+        db.get(),
+        "SELECT source_id FROM aeris_source_geometry ORDER BY source_id;",
+        source_stmt);
+    if (!status) return status;
+
+    while (true) {
+        const int rc = sqlite3_step(source_stmt.get());
+        if (rc == SQLITE_DONE) break;
+        if (rc != SQLITE_ROW || sqlite3_column_type(source_stmt.get(), 0) != SQLITE_TEXT) {
+            return {StorageError::schema_invalid, "geometry integrity scan found an invalid source marker key"};
+        }
+        const std::string source_id = text_column(source_stmt.get(), 0);
+        if (!bounded_identifier(source_id)) {
+            return {StorageError::schema_invalid, "geometry integrity scan found an invalid source identifier"};
+        }
+
+        std::vector<FeatureGeometryIndexEntry> index;
+        status = read_geometry_index(db.get(), source_id, index);
+        if (!status) return status;
+
+        for (const FeatureGeometryIndexEntry& entry : index) {
+            std::optional<FeatureGeometryRecord> feature;
+            status = load_feature_from_db(db.get(), source_id, entry.stable_id, feature);
+            if (!status) return status;
+            if (!feature.has_value()) {
+                return {StorageError::schema_invalid, "geometry integrity index references a missing feature"};
+            }
+            if (feature->source_feature_id != entry.source_feature_id ||
+                feature->rings.size() != static_cast<std::size_t>(entry.ring_count)) {
+                return {StorageError::schema_invalid, "geometry integrity feature disagrees with its canonical index"};
+            }
+        }
+    }
+    return Status::success();
+}
+
+}  // namespace detail
 
 }  // namespace aeris::storage
