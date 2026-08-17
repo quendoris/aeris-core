@@ -294,7 +294,8 @@ Status load_geometry_marker(
     const std::string model = text_column(stmt.get(), 0);
     const std::string encoding = text_column(stmt.get(), 1);
     const sqlite3_int64 count = sqlite3_column_int64(stmt.get(), 2);
-    if (model != kCanonicalGeometryModelId || encoding != kCanonicalCoordinateEncodingId ||
+    if (std::string_view(model) != kCanonicalGeometryModelId ||
+        std::string_view(encoding) != kCanonicalCoordinateEncodingId ||
         count < 0 || count > static_cast<sqlite3_int64>(kMaxFeaturesPerSource)) {
         return {StorageError::schema_invalid, "stored source geometry marker violates the canonical model/encoding contract"};
     }
@@ -324,6 +325,7 @@ Status read_geometry_index(
     if (!status) return status;
     if (!(status = detail::bind_text(db, stmt.get(), 1, source_id))) return status;
 
+    std::set<std::string> source_feature_ids;
     while (true) {
         const int rc = sqlite3_step(stmt.get());
         if (rc == SQLITE_DONE) break;
@@ -339,6 +341,9 @@ Status read_geometry_index(
         if (!bounded_identifier(entry.stable_id) || !bounded_identifier(entry.source_feature_id) ||
             ring_count < 1 || ring_count > static_cast<sqlite3_int64>(kMaxRingsPerFeature)) {
             return {StorageError::schema_invalid, "stored feature index violates canonical bounds"};
+        }
+        if (!source_feature_ids.insert(entry.source_feature_id).second) {
+            return {StorageError::schema_invalid, "stored geometry contains duplicate source feature identities"};
         }
         entry.ring_count = static_cast<std::uint32_t>(ring_count);
         features.push_back(std::move(entry));
@@ -445,7 +450,7 @@ Status load_feature_from_db(
     detail::StmtPtr ring_stmt;
     status = detail::prepare(
         db,
-        "SELECT role,interior_side,longitude_winding,closing_longitude_f64le,vertex_count,vertices_f64le "
+        "SELECT role,interior_side,longitude_winding,closing_longitude_f64le,vertex_count,vertices_f64le,ring_index "
         "FROM aeris_feature_ring WHERE source_id=? AND stable_id=? ORDER BY ring_index;",
         ring_stmt);
     if (!status) return status;
@@ -458,6 +463,15 @@ Status load_feature_from_db(
         if (ring_rc != SQLITE_ROW) {
             return {StorageError::sqlite_failure, detail::sqlite_message(db, "could not read canonical feature ring")};
         }
+        if (sqlite3_column_type(ring_stmt.get(), 6) != SQLITE_INTEGER) {
+            return {StorageError::schema_invalid, "stored feature ring index has invalid SQLite type"};
+        }
+        const sqlite3_int64 ring_index = sqlite3_column_int64(ring_stmt.get(), 6);
+        if (ring_index < 0 ||
+            ring_index != static_cast<sqlite3_int64>(loaded.rings.size())) {
+            return {StorageError::schema_invalid, "stored feature ring indices are not contiguous from zero"};
+        }
+
         GeographicRingRecord ring{};
         status = decode_ring_row(ring_stmt.get(), ring);
         if (!status) return status;
@@ -530,7 +544,7 @@ Status existing_geometry_equals(
         const FeatureGeometryIndexEntry& indexed = index[position];
         if (indexed.stable_id != wanted.stable_id ||
             indexed.source_feature_id != wanted.source_feature_id ||
-            indexed.ring_count != wanted.rings.size()) {
+            static_cast<std::size_t>(indexed.ring_count) != wanted.rings.size()) {
             identical = false;
             return Status::success();
         }
