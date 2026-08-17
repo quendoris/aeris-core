@@ -23,6 +23,10 @@ enum class SceneQuality {
 };
 
 struct SceneFeature final {
+    std::string stable_id;
+    std::string style_key;
+    std::string label;
+    std::string iso_a2;
     std::vector<std::vector<geometry::PlanarPoint>> fill_rings;
     std::vector<std::vector<geometry::PlanarPoint>> outlines;
 };
@@ -30,6 +34,7 @@ struct SceneFeature final {
 struct SceneData final {
     ViewMode mode = ViewMode::globe;
     SceneQuality quality = SceneQuality::preview;
+    bool political = false;
     std::vector<SceneFeature> features;
 
     double min_x = -1.0;

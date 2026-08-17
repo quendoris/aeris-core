@@ -3,6 +3,8 @@
 
 #include "unfold_controller.hpp"
 
+#include "scene_presentation.hpp"
+
 #include <QMetaObject>
 #include <QPointer>
 #include <QRunnable>
@@ -36,23 +38,23 @@ public:
     void run() override {
         const auto token = canceled_;
         UnfoldBundle bundle = build_unfold_bundle(
-            *world_,
-            camera_longitude_deg_,
-            camera_latitude_deg_,
-            target_mode_,
+            *world_, camera_longitude_deg_, camera_latitude_deg_, target_mode_,
             [token]() { return token->load(std::memory_order_relaxed); }
         );
+        if (!bundle.canceled && bundle.ok) {
+            apply_source_presentation(bundle.globe_endpoint, *world_);
+            apply_source_presentation(bundle.flat_endpoint, *world_);
+            bundle.ok = bundle.globe_endpoint.ok && bundle.flat_endpoint.ok;
+            if (!bundle.ok && bundle.diagnostic.empty()) {
+                bundle.diagnostic = "source presentation failed for unfold endpoints";
+            }
+        }
 
         QPointer<UnfoldController> target = target_;
         QMetaObject::invokeMethod(
             target_,
             [target, generation = generation_, bundle = std::move(bundle)]() mutable {
-                if (target) {
-                    target->accept_background_bundle(
-                        generation,
-                        std::move(bundle)
-                    );
-                }
+                if (target) target->accept_background_bundle(generation, std::move(bundle));
             },
             Qt::QueuedConnection
         );
@@ -91,10 +93,14 @@ void UnfoldController::set_busy_callback(BusyCallback callback) {
     busy_callback_ = std::move(callback);
 }
 
+void UnfoldController::set_world(std::shared_ptr<const source::Result> world) {
+    cancel();
+    world_ = std::move(world);
+    if (busy_callback_) busy_callback_(false);
+}
+
 void UnfoldController::cancel() {
-    if (cancel_token_) {
-        cancel_token_->store(true, std::memory_order_relaxed);
-    }
+    if (cancel_token_) cancel_token_->store(true, std::memory_order_relaxed);
     ++generation_;
 }
 
@@ -106,19 +112,12 @@ void UnfoldController::request(
     cancel();
     const std::uint64_t generation = generation_;
     cancel_token_ = std::make_shared<std::atomic_bool>(false);
-
-    if (busy_callback_) {
-        busy_callback_(true);
-    }
+    if (busy_callback_) busy_callback_(true);
 
     pool_.start(new UnfoldTask(
-        QPointer<UnfoldController>(this),
-        world_,
-        camera_longitude_deg,
-        camera_latitude_deg,
-        target_mode,
-        cancel_token_,
-        generation
+        QPointer<UnfoldController>(this), world_,
+        camera_longitude_deg, camera_latitude_deg, target_mode,
+        cancel_token_, generation
     ));
 }
 
@@ -126,15 +125,9 @@ void UnfoldController::accept_background_bundle(
     const std::uint64_t generation,
     UnfoldBundle bundle
 ) {
-    if (generation != generation_ || bundle.canceled) {
-        return;
-    }
-    if (busy_callback_) {
-        busy_callback_(false);
-    }
-    if (bundle_callback_) {
-        bundle_callback_(std::move(bundle));
-    }
+    if (generation != generation_ || bundle.canceled) return;
+    if (busy_callback_) busy_callback_(false);
+    if (bundle_callback_) bundle_callback_(std::move(bundle));
 }
 
 }  // namespace aeris::viewer

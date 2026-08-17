@@ -7,8 +7,10 @@ add_executable(aeris_viewer
     main.cpp
     main_window.cpp
     map_canvas.cpp
+    render_surface.cpp
     scene_builder.cpp
     scene_controller.cpp
+    scene_presentation.cpp
     unfold.cpp
     unfold_controller.cpp
     world_loader.cpp
@@ -26,6 +28,7 @@ aeris_enable_warnings(aeris_viewer)
 add_executable(aeris_viewer_scene_probe
     scene_probe.cpp
     scene_builder.cpp
+    scene_presentation.cpp
     unfold.cpp
     world_loader.cpp
 )
@@ -38,6 +41,7 @@ add_executable(aeris_viewer_controller_probe
     controller_probe.cpp
     scene_builder.cpp
     scene_controller.cpp
+    scene_presentation.cpp
     unfold.cpp
     unfold_controller.cpp
     world_loader.cpp
