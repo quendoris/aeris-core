@@ -60,8 +60,6 @@ if(TARGET aeris_storage)
         test_geometry_corruption.cpp
         project_storage_geometry_corruption
     )
-    # This hostile-file fixture deliberately edits SQLite rows below the
-    # storage API, so it links the same private SQLite dependency explicitly.
     target_link_libraries(aeris_test_geometry_corruption PRIVATE ${AERIS_SQLITE_TARGET})
 
     aeris_add_storage_test(
@@ -69,8 +67,6 @@ if(TARGET aeris_storage)
         test_dataset_atomicity.cpp
         project_storage_dataset_atomicity
     )
-    # The rollback proof installs a SQLite trigger below the public storage API
-    # to force a failure precisely between provenance and geometry insertion.
     target_link_libraries(aeris_test_dataset_atomicity PRIVATE ${AERIS_SQLITE_TARGET})
 
     aeris_add_storage_test(
@@ -78,8 +74,6 @@ if(TARGET aeris_storage)
         test_resource.cpp
         project_storage_resource
     )
-    # Resource tests calculate fixture hashes through the same shared support
-    # primitive and deliberately corrupt SQLite chunk payloads below the public API.
     target_link_libraries(aeris_test_resource PRIVATE AERIS::hash ${AERIS_SQLITE_TARGET})
 
     aeris_add_storage_test(
@@ -87,9 +81,14 @@ if(TARGET aeris_storage)
         test_layer.cpp
         project_storage_layer
     )
-    # The layer contract uses the shared hash fixture helper and deliberately
-    # mutates SQLite below the API to prove deep graph integrity rejection.
     target_link_libraries(aeris_test_layer PRIVATE AERIS::hash ${AERIS_SQLITE_TARGET})
+
+    aeris_add_storage_test(
+        aeris_test_style
+        test_style.cpp
+        project_storage_style
+    )
+    target_link_libraries(aeris_test_style PRIVATE AERIS::hash ${AERIS_SQLITE_TARGET})
 
     add_executable(aeris_storage_abrupt storage_abrupt.cpp)
     target_link_libraries(aeris_storage_abrupt PRIVATE AERIS::storage)
