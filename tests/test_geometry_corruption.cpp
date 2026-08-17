@@ -156,6 +156,9 @@ void test_wrong_model_id(const std::filesystem::path& root) {
     auto project = ProjectStore::open(path);
     expect(project.ok(), "structurally valid wrong-model project should pass container open");
     if (!project.ok()) return;
+    expect_schema_invalid(
+        project.store->verify_integrity(),
+        "deep project audit must reject unknown geometry model ID");
     const auto index = list_source_geometry_index(*project.store, "source.geometry.corruption");
     expect_schema_invalid(index.status, "unknown geometry model ID must fail semantic read");
 }
@@ -178,6 +181,9 @@ void test_sparse_ring_index(const std::filesystem::path& root) {
     auto project = ProjectStore::open(path);
     expect(project.ok(), "sparse ring-index project should remain SQLite-structurally valid");
     if (!project.ok()) return;
+    expect_schema_invalid(
+        project.store->verify_integrity(),
+        "deep project audit must reject noncontiguous ring indices");
     const auto feature = load_feature_geometry(
         *project.store, "source.geometry.corruption", "feature:fixture");
     expect_schema_invalid(feature.status, "noncontiguous ring indices must fail semantic read");
@@ -244,6 +250,9 @@ void test_nonfinite_coordinate_blob(const std::filesystem::path& root) {
     auto project = ProjectStore::open(path);
     expect(project.ok(), "NaN coordinate project should remain SQLite-structurally valid");
     if (!project.ok()) return;
+    expect_schema_invalid(
+        project.store->verify_integrity(),
+        "deep project audit must reject nonfinite canonical coordinates");
     const auto feature = load_feature_geometry(
         *project.store, "source.geometry.corruption", "feature:fixture");
     expect_schema_invalid(feature.status, "nonfinite binary64 coordinate must fail semantic read");
