@@ -122,6 +122,71 @@ private:
     return identity;
 }
 
+void test_requirement_promotion_is_monotonic() {
+    using namespace aeris::storage;
+
+    Fixture fixture{};
+    ProjectStore* project = fixture.project();
+    expect_true("promotion project creates", project != nullptr);
+    if (project == nullptr) return;
+
+    ProjectResourceIdentity optional = identity_for(
+        "asset.promoted", fixture.optional_path(), false,
+        "https://example.invalid/aeris/promoted");
+    const auto inserted = store_external_resource(
+        *project, optional, "2026-08-17T09:10:01Z");
+    expect_true("optional promotion fixture stores", inserted.ok() && inserted.inserted);
+    expect_true("optional promotion fixture is revision one", project->metadata().revision == 1U);
+
+    const auto frozen = freeze_project(*project, "2026-08-17T09:10:02Z");
+    expect_true("optional promotion fixture can freeze", frozen.ok());
+    expect_true("optional promotion fixture freeze is revision two", project->metadata().revision == 2U);
+    expect_true("optional promotion fixture is frozen", project->metadata().frozen);
+
+    ProjectResourceIdentity required = optional;
+    required.required_for_reproduction = true;
+    const auto promoted = store_external_resource(
+        *project, required, "2026-08-17T09:10:03Z");
+    expect_true("same content identity promotes requirement",
+                promoted.ok() && !promoted.inserted && !promoted.representation_changed &&
+                promoted.durably_committed);
+    expect_true("requirement promotion is one revision", project->metadata().revision == 3U);
+    expect_true("promoted external requirement atomically thaws project", !project->metadata().frozen);
+
+    auto listed = list_project_resources(*project);
+    expect_true("promoted resource lists", listed.ok() && listed.records.size() == 1U);
+    if (listed.ok() && listed.records.size() == 1U) {
+        expect_true("required bit promoted", listed.records.front().identity.required_for_reproduction);
+    }
+
+    const auto no_downgrade = store_external_resource(
+        *project, optional, "2026-08-17T09:10:04Z");
+    expect_true("optional retry cannot downgrade required resource",
+                no_downgrade.ok() && !no_downgrade.durably_committed);
+    expect_true("no-downgrade retry keeps revision three", project->metadata().revision == 3U);
+    listed = list_project_resources(*project);
+    expect_true("required bit remains monotonic",
+                listed.ok() && listed.records.size() == 1U &&
+                listed.records.front().identity.required_for_reproduction);
+
+    const auto embedded = embed_resource_file(
+        *project, optional, fixture.optional_path(), "2026-08-17T09:10:05Z");
+    expect_true("embedding accepts original immutable content identity after promotion",
+                embedded.ok() && !embedded.inserted && embedded.representation_changed &&
+                embedded.durably_committed);
+    expect_true("promoted embed is revision four", project->metadata().revision == 4U);
+    listed = list_project_resources(*project);
+    expect_true("embedding never demotes required bit",
+                listed.ok() && listed.records.size() == 1U &&
+                listed.records.front().identity.required_for_reproduction &&
+                listed.records.front().storage_mode == ResourceStorageMode::embedded);
+
+    const auto refrozen = freeze_project(*project, "2026-08-17T09:10:06Z");
+    expect_true("promoted embedded resource permits refreeze", refrozen.ok());
+    expect_true("promoted resource refreeze is revision five", project->metadata().revision == 5U);
+    expect_true("promotion project returns to frozen", project->metadata().frozen);
+}
+
 void test_portable_resource_lifecycle() {
     using namespace aeris::storage;
 
@@ -292,6 +357,7 @@ void test_portable_resource_lifecycle() {
 }  // namespace
 
 int main() {
+    test_requirement_promotion_is_monotonic();
     test_portable_resource_lifecycle();
 
     if (failures != 0) {
