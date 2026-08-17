@@ -3,7 +3,33 @@
 
 #include "aeris/source/adapter.hpp"
 
+#include "aeris/util/text.hpp"
+
+#include <cmath>
+#include <set>
+
 namespace aeris::source {
+namespace {
+
+constexpr std::size_t kMaxPropertyKeyBytes = 255U;
+constexpr std::size_t kMaxPropertyTextBytes = 1024U * 1024U;
+
+[[nodiscard]] bool valid_property(const FeatureProperty& property) noexcept {
+    if (property.key.empty() || property.key.size() > kMaxPropertyKeyBytes ||
+        !util::is_valid_utf8_nul_free(property.key)) {
+        return false;
+    }
+    if (const auto* real = std::get_if<double>(&property.value)) {
+        return std::isfinite(*real);
+    }
+    if (const auto* text = std::get_if<std::string>(&property.value)) {
+        return text->size() <= kMaxPropertyTextBytes &&
+               util::is_valid_utf8_nul_free(*text);
+    }
+    return true;
+}
+
+}  // namespace
 
 bool Provenance::complete() const noexcept {
     return !provider.empty() && !dataset.empty() && !snapshot.empty() &&
@@ -46,6 +72,16 @@ SourceError validate_result(
         }
         for (const FeatureRing& ring : feature.rings) {
             if (ring.geometry.vertices.size() < 3U) {
+                return SourceError::malformed_source;
+            }
+        }
+
+        if (!result.feature_properties_complete && !feature.properties.empty()) {
+            return SourceError::malformed_source;
+        }
+        std::set<std::string> property_keys;
+        for (const FeatureProperty& property : feature.properties) {
+            if (!valid_property(property) || !property_keys.insert(property.key).second) {
                 return SourceError::malformed_source;
             }
         }
