@@ -2,16 +2,22 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 #include "aeris/source/acquisition.hpp"
+#include "aeris/source/dbf.hpp"
 #include "aeris/source/natural_earth.hpp"
 #include "aeris/util/sha256.hpp"
+#include "aeris/util/text.hpp"
 
+#include <array>
+#include <charconv>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <iostream>
+#include <optional>
 #include <set>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <utility>
 
 namespace {
@@ -45,6 +51,74 @@ bool add_resource(
     resource.sha256 = hash.digest.hex();
     resource.size_bytes = size;
     manifest.resources.push_back(std::move(resource));
+    return true;
+}
+
+std::string trim_spaces(const std::string& value) {
+    const std::size_t first = value.find_first_not_of(' ');
+    if (first == std::string::npos) return {};
+    const std::size_t last = value.find_last_not_of(' ');
+    return value.substr(first, last - first + 1U);
+}
+
+std::optional<std::size_t> field_index(
+    const aeris::source::DbfTableResult& table,
+    const std::string_view name) {
+    for (std::size_t index = 0U; index < table.fields.size(); ++index) {
+        if (table.fields[index].name.size() == name.size() &&
+            std::equal(table.fields[index].name.begin(), table.fields[index].name.end(), name.begin())) {
+            return index;
+        }
+    }
+    return std::nullopt;
+}
+
+bool diagnose_dbf_semantics(const std::filesystem::path& dbf_path, std::string& diagnostic) {
+    const aeris::source::DbfTableResult table = aeris::source::read_dbf_table(dbf_path);
+    if (!table.ok()) {
+        diagnostic = "strict DBF reader failed before semantic diagnosis: " + table.diagnostic;
+        return false;
+    }
+
+    constexpr std::array<std::string_view, 13> text_fields{{
+        "NAME", "NAME_LONG", "ADMIN", "SOVEREIGNT", "TYPE", "ADM0_A3", "SOV_A3",
+        "ISO_A2", "ISO_A3", "UN_A3", "CONTINENT", "REGION_UN", "SUBREGION"
+    }};
+    std::array<std::size_t, text_fields.size()> text_indices{};
+    for (std::size_t index = 0U; index < text_fields.size(); ++index) {
+        const auto found = field_index(table, text_fields[index]);
+        if (!found.has_value()) {
+            diagnostic = "missing DBF field " + std::string(text_fields[index]);
+            return false;
+        }
+        text_indices[index] = *found;
+    }
+    const auto ne_id_index = field_index(table, "NE_ID");
+    if (!ne_id_index.has_value()) {
+        diagnostic = "missing DBF field NE_ID";
+        return false;
+    }
+
+    for (const aeris::source::DbfRecord& row : table.records) {
+        for (std::size_t field = 0U; field < text_fields.size(); ++field) {
+            const std::string value = trim_spaces(row.values[text_indices[field]]);
+            if (!aeris::util::is_valid_utf8_nul_free(value)) {
+                diagnostic = "invalid UTF-8/NUL at physical row " +
+                    std::to_string(row.record_number) + " field " + std::string(text_fields[field]);
+                return false;
+            }
+        }
+        const std::string ne_id_text = trim_spaces(row.values[*ne_id_index]);
+        std::int64_t ne_id = 0;
+        const auto parsed = std::from_chars(
+            ne_id_text.data(), ne_id_text.data() + ne_id_text.size(), ne_id, 10);
+        if (ne_id_text.empty() || parsed.ec != std::errc{} ||
+            parsed.ptr != ne_id_text.data() + ne_id_text.size() || ne_id <= 0) {
+            diagnostic = "invalid positive NE_ID at physical row " +
+                std::to_string(row.record_number) + " raw='" + ne_id_text + "'";
+            return false;
+        }
+    }
     return true;
 }
 
@@ -88,6 +162,11 @@ int main(const int argc, char** argv) {
         return fail(4, "verified snapshot construction failed: " + verified.diagnostic);
     }
 
+    std::string semantic_diagnostic;
+    if (!diagnose_dbf_semantics(root / "ne_110m_admin_0_countries.dbf", semantic_diagnostic)) {
+        return fail(5, semantic_diagnostic);
+    }
+
     const aeris::source::NaturalEarthAdmin0Countries110mAdapter adapter{};
     aeris::source::Request request{};
     request.capability = aeris::source::Capability::admin0;
@@ -95,13 +174,13 @@ int main(const int argc, char** argv) {
     request.worldview = "natural-earth.de-facto";
     const aeris::source::Result result = adapter.load(*verified.snapshot, request);
     if (!result.ok()) {
-        return fail(5, "adapter load failed: " + result.diagnostic);
+        return fail(6, "adapter load failed: " + result.diagnostic);
     }
     if (!result.feature_properties_complete || result.features.empty()) {
-        return fail(6, "adapter did not produce a nonempty complete feature-property channel");
+        return fail(7, "adapter did not produce a nonempty complete feature-property channel");
     }
     if (result.provenance.worldview != request.worldview) {
-        return fail(7, "adapter provenance worldview differs from requested pinned worldview");
+        return fail(8, "adapter provenance worldview differs from requested pinned worldview");
     }
 
     std::set<std::string> stable_ids;
@@ -110,7 +189,7 @@ int main(const int argc, char** argv) {
     std::size_t vertices = 0U;
     for (const aeris::source::Feature& feature : result.features) {
         if (!stable_ids.insert(feature.stable_id).second || feature.properties.size() != 14U) {
-            return fail(8, "feature identity or complete property cardinality is malformed");
+            return fail(9, "feature identity or complete property cardinality is malformed");
         }
 
         const auto* name = property(feature, "name");
@@ -122,14 +201,14 @@ int main(const int argc, char** argv) {
             !std::holds_alternative<std::string>(iso_a2->value) ||
             !std::holds_alternative<std::string>(adm0_a3->value) ||
             !std::holds_alternative<std::int64_t>(ne_id->value)) {
-            return fail(9, "required typed political properties are absent or have wrong types");
+            return fail(10, "required typed political properties are absent or have wrong types");
         }
         if (std::get<std::string>(name->value).empty() ||
             std::get<std::string>(adm0_a3->value).empty()) {
-            return fail(10, "required country name/admin code is empty");
+            return fail(11, "required country name/admin code is empty");
         }
         if (!ne_ids.insert(std::get<std::int64_t>(ne_id->value)).second) {
-            return fail(11, "NE_ID is not unique across the adapter result");
+            return fail(12, "NE_ID is not unique across the adapter result");
         }
 
         rings += feature.rings.size();
