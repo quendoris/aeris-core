@@ -118,6 +118,7 @@ if(AERIS_BUILD_PROJECT)
 
     add_library(aeris_project STATIC
         src/project/source_bridge.cpp
+        src/project/world_layers.cpp
     )
     add_library(AERIS::project ALIAS aeris_project)
     target_include_directories(aeris_project PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include> $<INSTALL_INTERFACE:include>)
