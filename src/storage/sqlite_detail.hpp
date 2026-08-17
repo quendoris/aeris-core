@@ -26,6 +26,9 @@ Status open_database(const std::filesystem::path& path, int flags, DbPtr& out);
 Status configure_durable(sqlite3* db);
 Status exec(sqlite3* db, const char* sql);
 Status prepare(sqlite3* db, const char* sql, StmtPtr& out);
+inline Status prepare(const DbPtr& db, const char* sql, StmtPtr& out) {
+    return prepare(db.get(), sql, out);
+}
 Status bind_text(sqlite3* db, sqlite3_stmt* stmt, int index, const std::string& value);
 Status bind_int64(sqlite3* db, sqlite3_stmt* stmt, int index, sqlite3_int64 value);
 Status bind_double(sqlite3* db, sqlite3_stmt* stmt, int index, double value);
