@@ -145,6 +145,11 @@ if(TARGET aeris_project)
         test_project_source_bridge.cpp
         project_source_bridge
     )
+    aeris_add_project_test(
+        aeris_test_project_feature_property_bridge
+        test_project_feature_property_bridge.cpp
+        project_feature_property_bridge
+    )
 endif()
 
 if(TARGET aeris_diagnostic_svg)
