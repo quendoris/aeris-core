@@ -7,13 +7,13 @@
 
 namespace aeris::storage::detail {
 
-// The geometry translation unit owns the expensive payload implementation under
-// an internal symbol name. All other storage callers see the wrapper below, so
-// generation-9 source-state semantics are always audited before canonical
-// geometry payloads. This keeps ProjectStore::verify_integrity() source-ordering
-// explicit without duplicating the geometry scanner or changing public APIs.
+// The geometry translation unit owns its legacy first-generation mutation and
+// expensive payload verifier under internal symbol names. Generation 9 exposes
+// compatibility facades elsewhere: geometry mutation delegates to the atomic
+// dataset transition, while deep audit always checks source state first.
 #if defined(AERIS_GEOMETRY_VERIFIER_IMPLEMENTATION)
 #define verify_geometry_semantics verify_geometry_payload_semantics
+#define store_source_geometry store_source_geometry_legacy_impl
 [[nodiscard]] Status verify_geometry_semantics(const ProjectStore& project);
 #else
 [[nodiscard]] Status verify_geometry_payload_semantics(const ProjectStore& project);
