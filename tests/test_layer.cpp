@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 quendoris
 // SPDX-License-Identifier: AGPL-3.0-only
 
+#include "aeris/storage/dataset.hpp"
 #include "aeris/storage/layer.hpp"
 #include "aeris/storage/provenance.hpp"
 #include "aeris/storage/resource.hpp"
@@ -131,9 +132,12 @@ void test_layer_graph_and_portability() {
                 project->metadata().format_minor == kDraftFormatMinor);
 
     const SourceSnapshotRecord source = source_record();
-    const auto source_insert = store_source_snapshot(
-        *project, source, "2026-08-17T09:20:02Z");
-    expect_true("layer source provenance stores", source_insert.ok());
+    SourceDatasetRecord source_dataset{};
+    source_dataset.source = source;
+    source_dataset.geometry.source_id = source.source_id;
+    const auto source_insert = store_source_dataset(
+        *project, source_dataset, "2026-08-17T09:20:02Z");
+    expect_true("layer source materializes with explicit-empty geometry", source_insert.ok());
     expect_true("source insertion is revision one", project->metadata().revision == 1U);
 
     const ProjectResourceIdentity asset = optional_asset(fixture.asset_path());
