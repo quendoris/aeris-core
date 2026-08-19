@@ -38,6 +38,15 @@ target_compile_features(aeris_viewer_scene_probe PRIVATE cxx_std_17)
 set_target_properties(aeris_viewer_scene_probe PROPERTIES CXX_EXTENSIONS OFF)
 aeris_enable_warnings(aeris_viewer_scene_probe)
 
+add_executable(aeris_viewer_presentation_probe
+    presentation_probe.cpp
+    scene_presentation.cpp
+)
+target_link_libraries(aeris_viewer_presentation_probe PRIVATE AERIS::core)
+target_compile_features(aeris_viewer_presentation_probe PRIVATE cxx_std_17)
+set_target_properties(aeris_viewer_presentation_probe PROPERTIES CXX_EXTENSIONS OFF)
+aeris_enable_warnings(aeris_viewer_presentation_probe)
+
 add_executable(aeris_viewer_controller_probe
     controller_probe.cpp
     scene_builder.cpp
