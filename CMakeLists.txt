@@ -100,6 +100,12 @@ if(AERIS_BUILD_STORAGE)
         src/storage/style.cpp
         src/storage/projection.cpp
     )
+    # geometry_detail.hpp exposes a source-state-gated verifier wrapper to all
+    # callers while this one translation unit owns the payload implementation.
+    set_source_files_properties(
+        src/storage/geometry.cpp
+        PROPERTIES COMPILE_DEFINITIONS AERIS_GEOMETRY_VERIFIER_IMPLEMENTATION=1
+    )
     add_library(AERIS::storage ALIAS aeris_storage)
     target_include_directories(aeris_storage
         PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include> $<INSTALL_INTERFACE:include>
