@@ -51,6 +51,7 @@ aeris_add_core_test(aeris_test_globe_curve test_globe_curve.cpp globe_curve)
 aeris_add_core_test(aeris_test_globe_polygon test_globe_polygon.cpp globe_polygon)
 aeris_add_core_test(aeris_test_globe_polygon_winding test_globe_polygon_winding.cpp globe_polygon_winding)
 aeris_add_core_test(aeris_test_globe_polygon_verified test_globe_polygon_verified.cpp globe_polygon_verified)
+aeris_add_core_test(aeris_test_scene_geometry test_scene_geometry.cpp scene_geometry)
 
 if(TARGET aeris_storage)
     aeris_add_storage_test(aeris_test_storage test_storage.cpp project_storage)
