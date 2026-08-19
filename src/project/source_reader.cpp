@@ -172,6 +172,12 @@ DurableSourceLoadResult load_durable_source_result(
             "durable source ID is not present in project provenance"
         );
     }
+    if (record->materialization_state != storage::SourceMaterializationState::materialized) {
+        return failure(
+            DurableSourceLoadError::geometry_unavailable,
+            "durable source is Referenced; canonical project geometry is not materialized"
+        );
+    }
 
     const storage::SourceGeometryIndexResult geometry_index =
         storage::list_source_geometry_index(project, source_id);
@@ -179,7 +185,7 @@ DurableSourceLoadResult load_durable_source_result(
         if (geometry_index.status.error == storage::StorageError::record_not_found) {
             return failure(
                 DurableSourceLoadError::geometry_unavailable,
-                "durable source does not contain canonical feature geometry"
+                "Materialized durable source does not contain canonical feature geometry"
             );
         }
         return storage_failure(
@@ -190,7 +196,7 @@ DurableSourceLoadResult load_durable_source_result(
     if (geometry_index.features.empty()) {
         return failure(
             DurableSourceLoadError::geometry_unavailable,
-            "durable source contains an empty canonical geometry set"
+            "Materialized durable source contains an empty canonical geometry set"
         );
     }
 
