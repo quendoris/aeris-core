@@ -70,8 +70,11 @@ jobs:
       - name: Build viewer and probes
         run: >-
           cmake --build build-viewer
-          --target aeris_viewer aeris_viewer_scene_probe aeris_viewer_controller_probe aeris_viewer_layer_stack_probe
+          --target aeris_viewer aeris_viewer_scene_probe aeris_viewer_presentation_probe aeris_viewer_controller_probe aeris_viewer_layer_stack_probe
           --parallel 2
+
+      - name: Verify presentation preserves primary scene failures
+        run: ./build-viewer/viewer/aeris_viewer_presentation_probe
 
       - name: Verify layer-stack role and visibility semantics
         run: ./build-viewer/viewer/aeris_viewer_layer_stack_probe

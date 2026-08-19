@@ -38,7 +38,7 @@ public:
             *world_, request_,
             [token]() { return token->load(std::memory_order_relaxed); }
         );
-        if (!scene.canceled) apply_source_presentation(scene, *world_);
+        if (!scene.canceled && scene.ok) apply_source_presentation(scene, *world_);
 
         QPointer<SceneController> target = target_;
         QMetaObject::invokeMethod(
@@ -96,7 +96,7 @@ void SceneController::request_preview(const SceneRequest& request) {
     cancel();
     if (busy_callback_) busy_callback_(false);
     SceneData scene = build_scene(*world_, request);
-    apply_source_presentation(scene, *world_);
+    if (scene.ok) apply_source_presentation(scene, *world_);
     if (scene_callback_) scene_callback_(std::move(scene));
 }
 
