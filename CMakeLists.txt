@@ -49,6 +49,7 @@ add_library(aeris_core STATIC
     src/geo/wgs84.cpp
     src/geometry/geographic.cpp
     src/geometry/planar.cpp
+    src/projection/adapter.cpp
     src/projection/primitives.cpp
     src/projection/ring.cpp
     src/projection/ring_piecewise.cpp
