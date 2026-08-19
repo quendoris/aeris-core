@@ -72,7 +72,7 @@ public:
     [[nodiscard]] const std::filesystem::path& path() const noexcept { return path_; }
 private:
     void add(aeris::source::SnapshotManifest& manifest, const std::string& logical, const std::filesystem::path& relative) const {
-        const auto full = path_ / relative; manifest.resources.push_back({logical, relative, aeris::util::sha256_file(full).digest.hex(), std::filesystem::file_size(full)});
+        const auto full = path_ / relative; manifest.resources.push_back({logical, relative, aeris::util::sha256_file(full).digest.hex(), std::filesystem::file_size(full), ""});
     }
     std::filesystem::path path_;
 };
