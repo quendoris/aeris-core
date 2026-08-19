@@ -26,9 +26,7 @@ namespace {
 }
 
 void include_point(SceneData& scene, const geometry::PlanarPoint point) {
-    if (!std::isfinite(point.x) || !std::isfinite(point.y)) {
-        return;
-    }
+    if (!std::isfinite(point.x) || !std::isfinite(point.y)) return;
     scene.min_x = std::min(scene.min_x, point.x);
     scene.min_y = std::min(scene.min_y, point.y);
     scene.max_x = std::max(scene.max_x, point.x);
@@ -233,6 +231,20 @@ void finalize_flat_bounds(SceneData& scene) {
     return scene;
 }
 
+[[nodiscard]] const projection::ProjectionAdapter* flat_adapter_for_mode(
+    const ViewMode mode
+) noexcept {
+    switch (mode) {
+        case ViewMode::sinusoidal:
+            return &projection::sinusoidal_projection_adapter();
+        case ViewMode::mollweide:
+            return &projection::mollweide_projection_adapter();
+        case ViewMode::globe:
+            break;
+    }
+    return nullptr;
+}
+
 [[nodiscard]] SceneData build_flat_verified(
     const source::Result& world,
     const SceneRequest& request,
@@ -246,9 +258,12 @@ void finalize_flat_bounds(SceneData& scene) {
     initialize_flat_bounds(scene);
 
     projection::RingProjectionOptions options{};
-    options.primitive = request.mode == ViewMode::sinusoidal
-        ? projection::EqualAreaPrimitive::sinusoidal
-        : projection::EqualAreaPrimitive::mollweide;
+    options.adapter = flat_adapter_for_mode(request.mode);
+    if (options.adapter == nullptr) {
+        scene.ok = false;
+        scene.diagnostic = "flat scene requested without a projection adapter";
+        return scene;
+    }
     options.central_meridian_rad = 0.0;
     options.relative_area_tolerance = 1e-7;
     options.absolute_area_tolerance_m2 = 10'000.0;
@@ -291,17 +306,13 @@ void finalize_flat_bounds(SceneData& scene) {
                 projected.max_piece_refinement_rounds
             );
             for (const auto& piece : projected.pieces) {
-                if (piece.size() < 3U) {
-                    continue;
-                }
+                if (piece.size() < 3U) continue;
                 output.fill_rings.push_back(piece);
                 output.outlines.push_back(piece);
                 ++scene.fill_rings;
                 ++scene.outline_parts;
                 scene.vertices += piece.size() * 2U;
-                for (const auto point : piece) {
-                    include_point(scene, point);
-                }
+                for (const auto point : piece) include_point(scene, point);
             }
         }
         scene.features.push_back(std::move(output));
@@ -309,9 +320,9 @@ void finalize_flat_bounds(SceneData& scene) {
 
     finalize_flat_bounds(scene);
     if (scene.ok) {
-        scene.diagnostic = request.mode == ViewMode::sinusoidal
-            ? "Verified WGS84 → authalic → Sinusoidal"
-            : "Verified WGS84 → authalic → Mollweide";
+        scene.diagnostic =
+            "Verified WGS84 → authalic → " +
+            std::string(options.adapter->descriptor().display_name);
     }
     return scene;
 }
