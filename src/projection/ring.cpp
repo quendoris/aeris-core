@@ -15,6 +15,13 @@ constexpr double kTwoPi = 2.0 * geo::kPi;
 constexpr double kSeamTolerance =
     512.0 * std::numeric_limits<double>::epsilon() * geo::kPi;
 
+[[nodiscard]] const ProjectionAdapter* effective_adapter(
+    const RingProjectionOptions& options
+) noexcept {
+    if (options.adapter != nullptr) return options.adapter;
+    return &projection_adapter_for_primitive(options.primitive);
+}
+
 struct EdgeContext final {
     geometry::GeodeticPoint start{};
     geometry::GeodeticPoint end{};
@@ -89,7 +96,7 @@ struct SeamContext final {
 }
 
 [[nodiscard]] bool valid_options(const RingProjectionOptions& options) noexcept {
-    return compatible_adapter(options.adapter) &&
+    return compatible_adapter(effective_adapter(options)) &&
            std::isfinite(options.central_meridian_rad) &&
            std::isfinite(options.relative_area_tolerance) &&
            options.relative_area_tolerance >= 0.0 &&
@@ -162,10 +169,6 @@ struct SeamIntersection final {
         for (long long k = first_k; k <= last_k; ++k) {
             const double seam = base_seam + static_cast<double>(k) * kTwoPi;
             const double parameter = (seam - start.longitude_rad) / delta;
-
-            // Half-open ownership (0, 1] means an exact seam vertex belongs to
-            // its incoming edge only. This prevents double-counting the same
-            // topological crossing on adjacent edges.
             if (parameter <= parameter_tolerance ||
                 parameter > 1.0 + parameter_tolerance) {
                 continue;
@@ -270,9 +273,6 @@ void append_shifted_point(
     constexpr double endpoint_tolerance =
         64.0 * std::numeric_limits<double>::epsilon();
 
-    // Continue from the seam crossing to the canonical closure point using the
-    // post-crossing longitude branch. If the crossing is already exactly the
-    // edge endpoint, that endpoint is the start-seam point and is not repeated.
     for (std::size_t vertex = crossing_edge + 1U; vertex <= vertex_count; ++vertex) {
         if (vertex == crossing_edge + 1U &&
             crossing.parameter >= 1.0 - endpoint_tolerance) {
@@ -289,9 +289,6 @@ void append_shifted_point(
         append_shifted_point(branch.coastline_vertices, point, shift_after);
     }
 
-    // The canonical closure point is physically the original first vertex.
-    // Resume at vertex 1 on the pre-crossing longitude branch; adding vertex 0
-    // again would duplicate that physical point.
     for (std::size_t vertex = 1U; vertex <= crossing_edge; ++vertex) {
         append_shifted_point(
             branch.coastline_vertices,
@@ -352,7 +349,7 @@ void append_curve_points(
     EdgeContext context{};
     context.start = start;
     context.end = end;
-    context.adapter = options.adapter;
+    context.adapter = effective_adapter(options);
     context.central_meridian_rad = options.central_meridian_rad;
 
     SubdivisionResult edge = subdivide_projected_curve(
@@ -383,7 +380,7 @@ void append_curve_points(
     to_pole.longitude_rad = branch.end_seam_longitude_rad;
     to_pole.start_latitude_rad = branch.seam_latitude_rad;
     to_pole.end_latitude_rad = branch.pole_latitude_rad;
-    to_pole.adapter = options.adapter;
+    to_pole.adapter = effective_adapter(options);
     to_pole.central_meridian_rad = options.central_meridian_rad;
 
     SubdivisionResult first = subdivide_projected_curve(
@@ -404,7 +401,7 @@ void append_curve_points(
     from_pole.longitude_rad = branch.start_seam_longitude_rad;
     from_pole.start_latitude_rad = branch.pole_latitude_rad;
     from_pole.end_latitude_rad = branch.seam_latitude_rad;
-    from_pole.adapter = options.adapter;
+    from_pole.adapter = effective_adapter(options);
     from_pole.central_meridian_rad = options.central_meridian_rad;
 
     SubdivisionResult second = subdivide_projected_curve(
