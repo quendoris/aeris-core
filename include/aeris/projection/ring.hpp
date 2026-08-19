@@ -5,9 +5,9 @@
 
 #include "aeris/geometry/geographic.hpp"
 #include "aeris/geometry/planar.hpp"
+#include "aeris/projection/adapter.hpp"
 #include "aeris/projection/seam.hpp"
 #include "aeris/projection/subdivide.hpp"
-#include "aeris/projection/wgs84.hpp"
 
 #include <cstddef>
 #include <vector>
@@ -25,7 +25,11 @@ enum class RingProjectionError {
 };
 
 struct RingProjectionOptions final {
-    EqualAreaPrimitive primitive = EqualAreaPrimitive::sinusoidal;
+    // Non-owning adapter reference. Built-in adapters have static lifetime;
+    // callers supplying custom adapters must keep them alive for the projection
+    // call. The verified pipeline accepts only adapters declaring the AERIS
+    // equal-area + single-antimeridian contracts it can currently prove.
+    const ProjectionAdapter* adapter = &sinusoidal_projection_adapter();
     double central_meridian_rad = 0.0;
 
     double relative_area_tolerance = 1e-9;
@@ -108,7 +112,7 @@ struct PiecewiseRingProjectionResult final {
 
 // Verified high-level ring projection. Zero-winding rings are first partitioned
 // at the active projection seam when necessary; every resulting geographic
-// piece then passes through the existing single-ring verified projector. Polar
+// piece then passes through the adapter-backed single-ring verifier. Polar
 // nonzero-winding rings remain owned by the dedicated polar seam contract.
 // The final signed planar sum is checked again against the original WGS84 ring
 // under one global area budget.
