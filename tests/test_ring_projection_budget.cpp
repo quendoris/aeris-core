@@ -133,7 +133,8 @@ void check_piecewise_projection(
     }
 }
 
-void for_each_adapter(const auto& callback) {
+template <typename Callback>
+void for_each_adapter(const Callback& callback) {
     for (const auto* adapter : aeris::projection::builtin_projection_adapters()) {
         expect_true("built-in adapter exists", adapter != nullptr);
         if (adapter != nullptr) callback(*adapter);
