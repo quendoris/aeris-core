@@ -25,19 +25,20 @@ enum class RingProjectionError {
 };
 
 struct RingProjectionOptions final {
-    // Non-owning adapter reference. Built-in adapters have static lifetime;
-    // callers supplying custom adapters must keep them alive for the projection
-    // call. The verified pipeline accepts only adapters declaring the AERIS
-    // equal-area + single-antimeridian contracts it can currently prove.
-    const ProjectionAdapter* adapter = &sinusoidal_projection_adapter();
-    double central_meridian_rad = 0.0;
+    // Preferred pre-1.0 selection path. Project/view code should set this from a
+    // stable projection model ID. A non-null adapter always wins over primitive.
+    const ProjectionAdapter* adapter = nullptr;
 
+    // Compatibility only for older internal tools/tests. The verifier resolves
+    // this enum to the corresponding built-in adapter before doing any work.
+    // It is not persisted and is not an extensibility mechanism.
+    EqualAreaPrimitive primitive = EqualAreaPrimitive::sinusoidal;
+
+    double central_meridian_rad = 0.0;
     double relative_area_tolerance = 1e-9;
     double absolute_area_tolerance_m2 = 1.0;
-
     double initial_geometric_tolerance_m = 8.0;
     double initial_local_area_tolerance_m2 = 1024.0;
-
     unsigned max_refinement_rounds = 12U;
     unsigned subdivision_max_depth = 32U;
     std::size_t subdivision_max_segments_per_edge = 1'000'000U;
@@ -110,12 +111,6 @@ struct PiecewiseRingProjectionResult final {
     }
 };
 
-// Verified high-level ring projection. Zero-winding rings are first partitioned
-// at the active projection seam when necessary; every resulting geographic
-// piece then passes through the adapter-backed single-ring verifier. Polar
-// nonzero-winding rings remain owned by the dedicated polar seam contract.
-// The final signed planar sum is checked again against the original WGS84 ring
-// under one global area budget.
 [[nodiscard]] PiecewiseRingProjectionResult project_wgs84_linear_ring_piecewise_verified(
     const geometry::LinearRing& ring,
     const RingProjectionOptions& options = {}
