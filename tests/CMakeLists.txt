@@ -62,6 +62,13 @@ if(TARGET aeris_storage)
     )
     target_link_libraries(aeris_test_source_materialization PRIVATE ${AERIS_SQLITE_TARGET})
 
+    aeris_add_storage_test(
+        aeris_test_source_materialization_corruption
+        test_source_materialization_corruption.cpp
+        project_storage_source_materialization_corruption
+    )
+    target_link_libraries(aeris_test_source_materialization_corruption PRIVATE ${AERIS_SQLITE_TARGET})
+
     aeris_add_storage_test(aeris_test_geometry_storage test_geometry_storage.cpp project_storage_geometry)
     aeris_add_storage_test(
         aeris_test_geometry_corruption
