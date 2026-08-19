@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 #include "aeris/project/source_bridge.hpp"
+#include "aeris/project/source_reader.hpp"
 #include "aeris/source/natural_earth.hpp"
 #include "aeris/storage/feature_property.hpp"
 #include "aeris/storage/geometry.hpp"
@@ -129,6 +130,91 @@ bool verify_stored_dataset(
     return true;
 }
 
+bool same_provenance(
+    const aeris::source::Provenance& left,
+    const aeris::source::Provenance& right
+) noexcept {
+    return left.provider == right.provider &&
+           left.dataset == right.dataset &&
+           left.snapshot == right.snapshot &&
+           left.dataset_version == right.dataset_version &&
+           left.source_uri == right.source_uri &&
+           left.license_id == right.license_id &&
+           left.content_sha256 == right.content_sha256 &&
+           left.retrieved_at_utc == right.retrieved_at_utc &&
+           left.worldview == right.worldview;
+}
+
+bool same_source_feature(
+    const aeris::source::Feature& left,
+    const aeris::source::Feature& right
+) {
+    if (left.stable_id != right.stable_id ||
+        left.source_id != right.source_id ||
+        left.rings.size() != right.rings.size() ||
+        left.properties.size() != right.properties.size()) {
+        return false;
+    }
+
+    for (std::size_t ring_index = 0U; ring_index < left.rings.size(); ++ring_index) {
+        const auto& a = left.rings[ring_index];
+        const auto& b = right.rings[ring_index];
+        if (a.role != b.role ||
+            a.geometry.interior_side != b.geometry.interior_side ||
+            a.geometry.longitude_winding != b.geometry.longitude_winding ||
+            a.geometry.closing_longitude_rad != b.geometry.closing_longitude_rad ||
+            a.geometry.vertices.size() != b.geometry.vertices.size()) {
+            return false;
+        }
+        for (std::size_t point_index = 0U; point_index < a.geometry.vertices.size(); ++point_index) {
+            if (a.geometry.vertices[point_index].longitude_rad !=
+                    b.geometry.vertices[point_index].longitude_rad ||
+                a.geometry.vertices[point_index].latitude_rad !=
+                    b.geometry.vertices[point_index].latitude_rad) {
+                return false;
+            }
+        }
+    }
+
+    std::map<std::string, aeris::source::FeaturePropertyValue> left_properties;
+    std::map<std::string, aeris::source::FeaturePropertyValue> right_properties;
+    for (const auto& property : left.properties) {
+        if (!left_properties.emplace(property.key, property.value).second) return false;
+    }
+    for (const auto& property : right.properties) {
+        if (!right_properties.emplace(property.key, property.value).second) return false;
+    }
+    return left_properties == right_properties;
+}
+
+bool compare_rehydrated(
+    const aeris::source::Result& reference,
+    const aeris::source::Result& rehydrated
+) {
+    if (!reference.ok() || !rehydrated.ok() ||
+        !reference.feature_properties_complete ||
+        !rehydrated.feature_properties_complete ||
+        !same_provenance(reference.provenance, rehydrated.provenance) ||
+        reference.features.size() != rehydrated.features.size()) {
+        return false;
+    }
+
+    std::map<std::string, const aeris::source::Feature*> expected;
+    std::map<std::string, const aeris::source::Feature*> actual;
+    for (const auto& feature : reference.features) expected.emplace(feature.stable_id, &feature);
+    for (const auto& feature : rehydrated.features) actual.emplace(feature.stable_id, &feature);
+    if (expected.size() != reference.features.size() ||
+        actual.size() != rehydrated.features.size() ||
+        expected.size() != actual.size()) {
+        return false;
+    }
+    for (const auto& [stable_id, feature] : expected) {
+        const auto found = actual.find(stable_id);
+        if (found == actual.end() || !same_source_feature(*feature, *found->second)) return false;
+    }
+    return true;
+}
+
 }  // namespace
 
 int main(const int argc, char** argv) {
@@ -201,20 +287,27 @@ int main(const int argc, char** argv) {
     if (!verify_stored_dataset(reference.source, *reopened.store)) {
         return fail(12, "reopened admin0 properties differ from adapter output");
     }
+    const auto rehydrated = aeris::project::load_durable_source_result(
+        *reopened.store, kProjectSourceId);
+    if (!rehydrated.ok() || !compare_rehydrated(reference.source, rehydrated.source)) {
+        return fail(13, "rehydrated admin0 Result differs from adapter output: " +
+            rehydrated.diagnostic);
+    }
     const auto integrity = reopened.store->verify_integrity();
-    if (!integrity.ok()) return fail(13, "reopened admin0 project failed deep integrity: " + integrity.diagnostic);
+    if (!integrity.ok()) return fail(14, "reopened admin0 project failed deep integrity: " + integrity.diagnostic);
 
     const auto retry = aeris::project::record_verified_source_snapshot(
         *reopened.store, registry, *verified.snapshot, request);
     if (!retry.ok() || retry.inserted || retry.durably_committed ||
         reopened.store->metadata().revision != 1U) {
-        return fail(14, "exact admin0 retry was not idempotent");
+        return fail(15, "exact admin0 retry was not idempotent");
     }
 
     std::cout
         << "project_natural_earth_admin0: PASS"
         << " features=" << reference.source.features.size()
         << " content_sha256=" << verified.snapshot->content_sha256()
+        << " rehydrated=yes"
         << '\n';
     return EXIT_SUCCESS;
 }

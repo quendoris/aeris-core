@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 #include "aeris/project/source_bridge.hpp"
+#include "aeris/project/source_reader.hpp"
 #include "aeris/source/natural_earth.hpp"
 #include "aeris/storage/geometry.hpp"
 #include "aeris/storage/provenance.hpp"
@@ -192,6 +193,78 @@ constexpr std::string_view kSourceUri =
     return true;
 }
 
+[[nodiscard]] bool same_provenance(
+    const aeris::source::Provenance& left,
+    const aeris::source::Provenance& right
+) noexcept {
+    return left.provider == right.provider &&
+           left.dataset == right.dataset &&
+           left.snapshot == right.snapshot &&
+           left.dataset_version == right.dataset_version &&
+           left.source_uri == right.source_uri &&
+           left.license_id == right.license_id &&
+           left.content_sha256 == right.content_sha256 &&
+           left.retrieved_at_utc == right.retrieved_at_utc &&
+           left.worldview == right.worldview;
+}
+
+[[nodiscard]] bool same_source_feature(
+    const aeris::source::Feature& left,
+    const aeris::source::Feature& right
+) noexcept {
+    if (left.stable_id != right.stable_id || left.source_id != right.source_id ||
+        left.rings.size() != right.rings.size() ||
+        !left.properties.empty() || !right.properties.empty()) {
+        return false;
+    }
+    for (std::size_t ring_index = 0U; ring_index < left.rings.size(); ++ring_index) {
+        const auto& a = left.rings[ring_index];
+        const auto& b = right.rings[ring_index];
+        if (a.role != b.role ||
+            a.geometry.interior_side != b.geometry.interior_side ||
+            a.geometry.longitude_winding != b.geometry.longitude_winding ||
+            a.geometry.closing_longitude_rad != b.geometry.closing_longitude_rad ||
+            a.geometry.vertices.size() != b.geometry.vertices.size()) {
+            return false;
+        }
+        for (std::size_t point_index = 0U; point_index < a.geometry.vertices.size(); ++point_index) {
+            if (a.geometry.vertices[point_index].longitude_rad !=
+                    b.geometry.vertices[point_index].longitude_rad ||
+                a.geometry.vertices[point_index].latitude_rad !=
+                    b.geometry.vertices[point_index].latitude_rad) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+[[nodiscard]] bool compare_rehydrated(
+    const aeris::source::Result& reference,
+    const aeris::source::Result& rehydrated
+) {
+    if (!reference.ok() || !rehydrated.ok() ||
+        !same_provenance(reference.provenance, rehydrated.provenance) ||
+        reference.feature_properties_complete || rehydrated.feature_properties_complete ||
+        reference.features.size() != rehydrated.features.size()) {
+        return false;
+    }
+
+    std::vector<const aeris::source::Feature*> expected;
+    std::vector<const aeris::source::Feature*> actual;
+    expected.reserve(reference.features.size());
+    actual.reserve(rehydrated.features.size());
+    for (const auto& feature : reference.features) expected.push_back(&feature);
+    for (const auto& feature : rehydrated.features) actual.push_back(&feature);
+    const auto by_id = [](const auto* a, const auto* b) { return a->stable_id < b->stable_id; };
+    std::sort(expected.begin(), expected.end(), by_id);
+    std::sort(actual.begin(), actual.end(), by_id);
+    for (std::size_t index = 0U; index < expected.size(); ++index) {
+        if (!same_source_feature(*expected[index], *actual[index])) return false;
+    }
+    return true;
+}
+
 struct GeometryCounts final {
     std::size_t features = 0U;
     std::size_t rings = 0U;
@@ -326,9 +399,15 @@ int main(const int argc, char** argv) {
     if (!compare_all_features(reference.source, *reopened.store)) {
         return fail(17, "stored Natural Earth geography differs from canonical adapter output");
     }
+    const auto rehydrated = aeris::project::load_durable_source_result(
+        *reopened.store, kProjectSourceId);
+    if (!rehydrated.ok() || !compare_rehydrated(reference.source, rehydrated.source)) {
+        return fail(18, "rehydrated Natural Earth land Result differs from adapter output: " +
+            rehydrated.diagnostic);
+    }
     const aeris::storage::Status integrity = reopened.store->verify_integrity();
     if (!integrity.ok()) {
-        return fail(18, "reopened real-world project failed deep integrity verification: " + integrity.diagnostic);
+        return fail(19, "reopened real-world project failed deep integrity verification: " + integrity.diagnostic);
     }
 
     const aeris::project::SourceBridgeResult retry =
@@ -339,7 +418,7 @@ int main(const int argc, char** argv) {
             request);
     if (!retry.ok() || retry.inserted || retry.durably_committed ||
         reopened.store->metadata().revision != 1U) {
-        return fail(19, "exact real-world retry was not idempotent");
+        return fail(20, "exact real-world retry was not idempotent");
     }
 
     std::cout
@@ -349,6 +428,7 @@ int main(const int argc, char** argv) {
         << " vertices=" << counts.vertices
         << " winding_rings=" << counts.winding_rings
         << " content_sha256=" << expected_content_hash
+        << " rehydrated=yes"
         << '\n';
     return EXIT_SUCCESS;
 }

@@ -126,6 +126,7 @@ if(AERIS_BUILD_PROJECT)
 
     add_library(aeris_project STATIC
         src/project/source_bridge.cpp
+        src/project/source_reader.cpp
         src/project/world_layers.cpp
     )
     add_library(AERIS::project ALIAS aeris_project)
