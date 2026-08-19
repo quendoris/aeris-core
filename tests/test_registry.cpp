@@ -44,7 +44,11 @@ public:
         manifest.source_uri = "fixture://registry";
         manifest.retrieved_at_utc = "2026-08-12T00:00:00Z";
         manifest.resources.push_back({
-            "data", "data.bin", aeris::util::sha256_file(path).digest.hex(), std::filesystem::file_size(path)
+            "data",
+            "data.bin",
+            aeris::util::sha256_file(path).digest.hex(),
+            std::filesystem::file_size(path),
+            ""
         });
         auto verified = aeris::source::verify_local_snapshot(root_, manifest);
         if (verified.ok()) {

@@ -60,8 +60,8 @@ aeris::source::SnapshotManifest valid_manifest(const TempDirectory& directory) {
     manifest.snapshot = "2026-08-12";
     manifest.source_uri = "fixture://dataset/2026-08-12";
     manifest.retrieved_at_utc = "2026-08-12T14:00:00Z";
-    manifest.resources.push_back({"geometry", "geometry.bin", directory.hash("geometry.bin"), 14U});
-    manifest.resources.push_back({"metadata", "nested/meta.txt", directory.hash("nested/meta.txt"), 9U});
+    manifest.resources.push_back({"geometry", "geometry.bin", directory.hash("geometry.bin"), 14U, ""});
+    manifest.resources.push_back({"metadata", "nested/meta.txt", directory.hash("nested/meta.txt"), 9U, ""});
     return manifest;
 }
 

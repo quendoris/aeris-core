@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 quendoris
 // SPDX-License-Identifier: AGPL-3.0-only
 
+#include "aeris/storage/dataset.hpp"
 #include "aeris/storage/layer.hpp"
 #include "aeris/storage/provenance.hpp"
 #include "aeris/storage/resource.hpp"
@@ -147,9 +148,12 @@ void seed_project(Fixture& fixture) {
     ProjectStore* project = fixture.project();
     if (project == nullptr) return;
 
-    const auto source = store_source_snapshot(
-        *project, source_record(), "2026-08-17T17:50:02Z");
-    expect_true("seed source stores", source.ok());
+    SourceDatasetRecord source_dataset{};
+    source_dataset.source = source_record();
+    source_dataset.geometry.source_id = source_dataset.source.source_id;
+    const auto source = store_source_dataset(
+        *project, source_dataset, "2026-08-17T17:50:02Z");
+    expect_true("seed materialized source stores", source.ok());
 
     const auto resource = store_external_resource(
         *project,

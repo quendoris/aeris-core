@@ -142,7 +142,7 @@ Status validate_metadata_update(const ProjectMetadataUpdate& update) {
     }
     if (update.frozen.has_value()) {
         return {StorageError::invalid_argument,
-                "frozen is a verified resource-state invariant and cannot be changed through metadata update"};
+                "frozen is a verified resource/source-state invariant and cannot be changed through metadata update"};
     }
     if (!update.worldview_id) {
         return {StorageError::invalid_argument,
@@ -172,8 +172,8 @@ Status validate_identity(sqlite3* db) {
 
 Status validate_schema_surface(sqlite3* db) {
     for (const char* sql : {
-             "SELECT source_id,adapter_id,capability_bits,temporal_class,provider,dataset,snapshot,dataset_version,source_uri,license_id,content_sha256,retrieved_at_utc,worldview FROM aeris_source LIMIT 0;",
-             "SELECT source_id,logical_name,sha256,size_bytes FROM aeris_source_resource LIMIT 0;",
+             "SELECT source_id,adapter_id,capability_bits,temporal_class,provider,dataset,snapshot,dataset_version,source_uri,license_id,content_sha256,retrieved_at_utc,worldview,materialization_state FROM aeris_source LIMIT 0;",
+             "SELECT source_id,logical_name,sha256,size_bytes,relative_path,retrieval_uri FROM aeris_source_resource LIMIT 0;",
              "SELECT source_id,model_id,encoding_id,feature_count FROM aeris_source_geometry LIMIT 0;",
              "SELECT source_id,stable_id,source_feature_id,ring_count FROM aeris_feature LIMIT 0;",
              "SELECT source_id,stable_id,ring_index,role,interior_side,longitude_winding,closing_longitude_f64le,vertex_count,vertices_f64le FROM aeris_feature_ring LIMIT 0;",
@@ -300,16 +300,38 @@ Status load_metadata(sqlite3* db, ProjectMetadata& metadata) {
 Status validate_frozen_claim(sqlite3* db, const ProjectMetadata& metadata) {
     if (!metadata.frozen) return Status::success();
 
-    detail::StmtPtr stmt;
+    detail::StmtPtr source_stmt;
     Status status = detail::prepare(
+        db,
+        "SELECT s.source_id FROM aeris_layer_source ls "
+        "JOIN aeris_source s ON s.source_id=ls.source_id "
+        "WHERE s.materialization_state<>1 LIMIT 1;",
+        source_stmt);
+    if (!status) return status;
+    const int source_rc = sqlite3_step(source_stmt.get());
+    if (source_rc == SQLITE_ROW) {
+        if (sqlite3_column_type(source_stmt.get(), 0) != SQLITE_TEXT) {
+            return {StorageError::schema_invalid,
+                    "frozen project source probe returned malformed data"};
+        }
+        return {StorageError::schema_invalid,
+                "project claims frozen state while a layer-bound source remains referenced"};
+    }
+    if (source_rc != SQLITE_DONE) {
+        return {StorageError::sqlite_failure,
+                detail::sqlite_message(db, "frozen project source probe failed")};
+    }
+
+    detail::StmtPtr resource_stmt;
+    status = detail::prepare(
         db,
         "SELECT resource_id FROM aeris_resource "
         "WHERE required_for_reproduction=1 AND storage_mode<>1 LIMIT 1;",
-        stmt);
+        resource_stmt);
     if (!status) return status;
-    const int rc = sqlite3_step(stmt.get());
-    if (rc == SQLITE_DONE) return Status::success();
-    if (rc != SQLITE_ROW || sqlite3_column_type(stmt.get(), 0) != SQLITE_TEXT) {
+    const int resource_rc = sqlite3_step(resource_stmt.get());
+    if (resource_rc == SQLITE_DONE) return Status::success();
+    if (resource_rc != SQLITE_ROW || sqlite3_column_type(resource_stmt.get(), 0) != SQLITE_TEXT) {
         return {StorageError::schema_invalid,
                 "frozen project resource probe returned malformed data"};
     }
@@ -417,7 +439,7 @@ ProjectStoreResult ProjectStore::create(
 
     const char* schema =
         "PRAGMA application_id=1095062089;"
-        "PRAGMA user_version=8;"
+        "PRAGMA user_version=9;"
         "CREATE TABLE aeris_meta("
         "id INTEGER PRIMARY KEY CHECK(id=1),"
         "project_uuid TEXT NOT NULL,"
@@ -453,13 +475,16 @@ ProjectStoreResult ProjectStore::create(
         "license_id TEXT NOT NULL,"
         "content_sha256 TEXT NOT NULL,"
         "retrieved_at_utc TEXT NOT NULL,"
-        "worldview TEXT NOT NULL"
+        "worldview TEXT NOT NULL,"
+        "materialization_state INTEGER NOT NULL CHECK(materialization_state IN (0,1))"
         ");"
         "CREATE TABLE aeris_source_resource("
         "source_id TEXT NOT NULL REFERENCES aeris_source(source_id) ON DELETE CASCADE,"
         "logical_name TEXT NOT NULL,"
         "sha256 TEXT NOT NULL,"
         "size_bytes INTEGER CHECK(size_bytes IS NULL OR size_bytes>=0),"
+        "relative_path TEXT NOT NULL,"
+        "retrieval_uri TEXT NOT NULL,"
         "PRIMARY KEY(source_id,logical_name)"
         ");"
         "CREATE TABLE aeris_source_geometry("
