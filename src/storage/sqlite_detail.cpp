@@ -41,6 +41,20 @@ Status install_source_materialization_guards(sqlite3* db) {
         "WHEN OLD.materialization_state=1 AND NEW.materialization_state<>1 "
         "BEGIN SELECT RAISE(ABORT,'AERIS materialized source cannot be demoted'); END;"
 
+        // Source/channel consistency is checked at the acknowledged project
+        // mutation boundary rather than at intermediate INSERTs. This lets one
+        // Download transaction insert geometry while the source is still
+        // Referenced, then flip it to Materialized before advancing revision;
+        // a legacy standalone geometry mutation cannot cross this boundary.
+        "CREATE TRIGGER IF NOT EXISTS aeris_guard_source_state_on_revision "
+        "BEFORE UPDATE OF revision ON aeris_meta "
+        "WHEN EXISTS("
+        "SELECT 1 FROM aeris_source s "
+        "LEFT JOIN aeris_source_geometry g ON g.source_id=s.source_id "
+        "WHERE (s.materialization_state=0 AND g.source_id IS NOT NULL) "
+        "OR (s.materialization_state=1 AND g.source_id IS NULL)) "
+        "BEGIN SELECT RAISE(ABORT,'AERIS source materialization/channel state is inconsistent'); END;"
+
         "CREATE TRIGGER IF NOT EXISTS aeris_guard_freeze_referenced_source "
         "BEFORE UPDATE OF frozen ON aeris_meta "
         "WHEN NEW.frozen=1 AND EXISTS("
