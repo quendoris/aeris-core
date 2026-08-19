@@ -13,9 +13,9 @@
 namespace aeris::storage {
 
 inline constexpr std::uint32_t kProjectApplicationId = 0x41455249U;  // "AERI"
-inline constexpr int kProjectSchemaGeneration = 8;
+inline constexpr int kProjectSchemaGeneration = 9;
 inline constexpr int kDraftFormatMajor = 0;
-inline constexpr int kDraftFormatMinor = 8;
+inline constexpr int kDraftFormatMinor = 9;
 
 struct ProjectMetadata {
     std::string project_uuid;
@@ -45,7 +45,7 @@ struct ProjectCreateOptions {
 
     // Retained during the pre-1.0 API transition only. Creating directly as
     // frozen is rejected: portable state is established by the verified
-    // freeze_project() resource contract after creation.
+    // freeze_project() resource/source contract after creation.
     bool frozen{false};
 };
 
@@ -59,8 +59,8 @@ struct ProjectMetadataUpdate {
     std::optional<std::string> worldview_id;
 
     // Retained during the pre-1.0 API transition only. Direct mutation is
-    // rejected because frozen is a verified resource-state invariant, not a
-    // caller-controlled metadata flag.
+    // rejected because frozen is a verified resource/source-state invariant,
+    // not a caller-controlled metadata flag.
     std::optional<bool> frozen;
 };
 
