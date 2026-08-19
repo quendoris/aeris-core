@@ -74,8 +74,17 @@ public:
 // Pre-1.0 compatibility bridge for internal tools that still name one of the
 // original mathematical primitives. New project/view code should persist or
 // select adapters by model_id and pass ProjectionAdapter directly.
-[[nodiscard]] const ProjectionAdapter& projection_adapter_for_primitive(
-    EqualAreaPrimitive primitive) noexcept;
+[[nodiscard]] inline const ProjectionAdapter& projection_adapter_for_primitive(
+    const EqualAreaPrimitive primitive
+) noexcept {
+    switch (primitive) {
+        case EqualAreaPrimitive::sinusoidal:
+            return sinusoidal_projection_adapter();
+        case EqualAreaPrimitive::mollweide:
+            return mollweide_projection_adapter();
+    }
+    return sinusoidal_projection_adapter();
+}
 
 using BuiltinProjectionAdapters = std::array<const ProjectionAdapter*, 3U>;
 
