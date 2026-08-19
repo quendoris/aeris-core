@@ -29,6 +29,11 @@ struct ResourceSpec final {
     std::filesystem::path relative_path;
     std::string sha256;
     std::optional<std::uintmax_t> size_bytes;
+
+    // Optional portable locator for obtaining this exact immutable resource.
+    // Verification itself remains transport-neutral: verify_local_snapshot()
+    // never performs network access and ignores this field after bytes exist.
+    std::string retrieval_uri;
 };
 
 struct SnapshotManifest final {
