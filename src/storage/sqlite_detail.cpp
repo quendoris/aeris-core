@@ -61,28 +61,24 @@ Status install_source_materialization_guards(sqlite3* db) {
         "SELECT 1 FROM aeris_layer_source ls "
         "JOIN aeris_source s ON s.source_id=ls.source_id "
         "WHERE s.materialization_state<>1) "
-        "BEGIN SELECT RAISE(ABORT,'AERIS frozen project cannot bind referenced source'); END;"
+        "BEGIN SELECT RAISE(ABORT,'AERIS frozen project cannot depend on referenced source'); END;"
 
-        "CREATE TRIGGER IF NOT EXISTS aeris_guard_frozen_layer_source_insert "
-        "BEFORE INSERT ON aeris_layer_source "
+        // Frozen is an invariant, not a user lock. Binding an online-only source
+        // therefore invalidates Frozen atomically in the same layer mutation,
+        // just as binding a required external project resource already does.
+        "CREATE TRIGGER IF NOT EXISTS aeris_thaw_on_referenced_source_binding_insert "
+        "AFTER INSERT ON aeris_layer_source "
         "WHEN EXISTS(SELECT 1 FROM aeris_meta WHERE id=1 AND frozen=1) "
         "AND EXISTS(SELECT 1 FROM aeris_source s "
-        "WHERE s.source_id=NEW.source_id AND s.materialization_state<>1) "
-        "BEGIN SELECT RAISE(ABORT,'AERIS frozen project cannot bind referenced source'); END;"
+        "WHERE s.source_id=NEW.source_id AND s.materialization_state=0) "
+        "BEGIN UPDATE aeris_meta SET frozen=0 WHERE id=1; END;"
 
-        "CREATE TRIGGER IF NOT EXISTS aeris_guard_frozen_layer_source_update "
-        "BEFORE UPDATE OF source_id ON aeris_layer_source "
+        "CREATE TRIGGER IF NOT EXISTS aeris_thaw_on_referenced_source_binding_update "
+        "AFTER UPDATE OF source_id ON aeris_layer_source "
         "WHEN EXISTS(SELECT 1 FROM aeris_meta WHERE id=1 AND frozen=1) "
         "AND EXISTS(SELECT 1 FROM aeris_source s "
-        "WHERE s.source_id=NEW.source_id AND s.materialization_state<>1) "
-        "BEGIN SELECT RAISE(ABORT,'AERIS frozen project cannot bind referenced source'); END;"
-
-        "CREATE TRIGGER IF NOT EXISTS aeris_guard_frozen_bound_source_demotion "
-        "BEFORE UPDATE OF materialization_state ON aeris_source "
-        "WHEN NEW.materialization_state<>1 "
-        "AND EXISTS(SELECT 1 FROM aeris_meta WHERE id=1 AND frozen=1) "
-        "AND EXISTS(SELECT 1 FROM aeris_layer_source ls WHERE ls.source_id=OLD.source_id) "
-        "BEGIN SELECT RAISE(ABORT,'AERIS frozen project cannot demote bound source'); END;"
+        "WHERE s.source_id=NEW.source_id AND s.materialization_state=0) "
+        "BEGIN UPDATE aeris_meta SET frozen=0 WHERE id=1; END;"
     );
 }
 
