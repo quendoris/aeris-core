@@ -249,20 +249,26 @@ void test_source_materialization() {
                 project->metadata().revision == 5U);
     expect_true("catalog insert does not thaw project", project->metadata().frozen);
 
-    LayerCreateRequest forbidden{};
-    forbidden.layer_id = "forbidden-online-layer";
-    forbidden.role_id = std::string(kLayerRolePhysicalLandFillV1);
-    forbidden.name = "Forbidden online layer";
-    forbidden.sources.push_back({"geometry", unused.source_id});
-    const auto forbidden_bind = append_layer(
-        *project, forbidden, "2026-08-19T08:00:08Z");
-    expect_true("frozen project cannot bind referenced source", !forbidden_bind.ok());
-    expect_true("failed layer bind preserves revision five", project->metadata().revision == 5U);
+    LayerCreateRequest online_again{};
+    online_again.layer_id = "second-online-layer";
+    online_again.role_id = std::string(kLayerRolePhysicalLandFillV1);
+    online_again.name = "Second online layer";
+    online_again.sources.push_back({"geometry", unused.source_id});
+    const auto online_bind = append_layer(
+        *project, online_again, "2026-08-19T08:00:08Z");
+    expect_true("binding referenced source atomically thaws frozen project",
+                online_bind.ok() && online_bind.changed && online_bind.durably_committed);
+    expect_true("online binding is one revision", project->metadata().revision == 6U);
+    expect_true("online binding invalidates frozen state", !project->metadata().frozen);
 
     const auto layers = list_project_layers(*project);
-    expect_true("failed layer bind rolls back completely",
-                layers.ok() && layers.records.size() == 1U &&
-                layers.records.front().layer_id == "online-countries");
+    expect_true("online binding preserves both durable layers",
+                layers.ok() && layers.records.size() == 2U);
+
+    const auto second_freeze = freeze_project(*project, "2026-08-19T08:00:09Z");
+    expect_true("freeze remains blocked until second online source is downloaded",
+                !second_freeze.ok());
+    expect_true("blocked refreeze keeps revision six", project->metadata().revision == 6U);
     expect_true("final materialization project passes deep integrity",
                 project->verify_integrity().ok());
 }
