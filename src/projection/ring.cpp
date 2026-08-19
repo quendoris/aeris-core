@@ -18,7 +18,7 @@ constexpr double kSeamTolerance =
 struct EdgeContext final {
     geometry::GeodeticPoint start{};
     geometry::GeodeticPoint end{};
-    EqualAreaPrimitive primitive = EqualAreaPrimitive::sinusoidal;
+    const ProjectionAdapter* adapter = nullptr;
     double central_meridian_rad = 0.0;
 };
 
@@ -31,16 +31,18 @@ struct EdgeContext final {
     }
 
     const auto* const context = static_cast<const EdgeContext*>(opaque_context);
+    if (context->adapter == nullptr) {
+        return {{}, geo::MathError::numerical_domain_error};
+    }
     const geometry::GeodeticPoint point = geometry::interpolate_wgs84_linear_edge(
         context->start,
         context->end,
         parameter
     );
 
-    return project_wgs84_primitive(
+    return context->adapter->forward_wgs84(
         point.longitude_rad,
         point.latitude_rad,
-        context->primitive,
         context->central_meridian_rad
     );
 }
@@ -49,7 +51,7 @@ struct SeamContext final {
     double longitude_rad = 0.0;
     double start_latitude_rad = 0.0;
     double end_latitude_rad = 0.0;
-    EqualAreaPrimitive primitive = EqualAreaPrimitive::sinusoidal;
+    const ProjectionAdapter* adapter = nullptr;
     double central_meridian_rad = 0.0;
 };
 
@@ -62,20 +64,33 @@ struct SeamContext final {
     }
 
     const auto* const context = static_cast<const SeamContext*>(opaque_context);
+    if (context->adapter == nullptr) {
+        return {{}, geo::MathError::numerical_domain_error};
+    }
     const double latitude =
         context->start_latitude_rad +
         parameter * (context->end_latitude_rad - context->start_latitude_rad);
 
-    return project_wgs84_primitive(
+    return context->adapter->forward_wgs84(
         context->longitude_rad,
         latitude,
-        context->primitive,
         context->central_meridian_rad
     );
 }
 
+[[nodiscard]] bool compatible_adapter(const ProjectionAdapter* const adapter) noexcept {
+    if (adapter == nullptr) return false;
+    const ProjectionDescriptor descriptor = adapter->descriptor();
+    return !descriptor.model_id.empty() &&
+           !descriptor.display_name.empty() &&
+           descriptor.cut_model_id == kProjectionCutSingleAntimeridianV1 &&
+           descriptor.area_contract == ProjectionAreaContract::equal_area &&
+           descriptor.cut_topology == ProjectionCutTopology::single_antimeridian;
+}
+
 [[nodiscard]] bool valid_options(const RingProjectionOptions& options) noexcept {
-    return std::isfinite(options.central_meridian_rad) &&
+    return compatible_adapter(options.adapter) &&
+           std::isfinite(options.central_meridian_rad) &&
            std::isfinite(options.relative_area_tolerance) &&
            options.relative_area_tolerance >= 0.0 &&
            std::isfinite(options.absolute_area_tolerance_m2) &&
@@ -337,7 +352,7 @@ void append_curve_points(
     EdgeContext context{};
     context.start = start;
     context.end = end;
-    context.primitive = options.primitive;
+    context.adapter = options.adapter;
     context.central_meridian_rad = options.central_meridian_rad;
 
     SubdivisionResult edge = subdivide_projected_curve(
@@ -368,7 +383,7 @@ void append_curve_points(
     to_pole.longitude_rad = branch.end_seam_longitude_rad;
     to_pole.start_latitude_rad = branch.seam_latitude_rad;
     to_pole.end_latitude_rad = branch.pole_latitude_rad;
-    to_pole.primitive = options.primitive;
+    to_pole.adapter = options.adapter;
     to_pole.central_meridian_rad = options.central_meridian_rad;
 
     SubdivisionResult first = subdivide_projected_curve(
@@ -389,7 +404,7 @@ void append_curve_points(
     from_pole.longitude_rad = branch.start_seam_longitude_rad;
     from_pole.start_latitude_rad = branch.pole_latitude_rad;
     from_pole.end_latitude_rad = branch.seam_latitude_rad;
-    from_pole.primitive = options.primitive;
+    from_pole.adapter = options.adapter;
     from_pole.central_meridian_rad = options.central_meridian_rad;
 
     SubdivisionResult second = subdivide_projected_curve(
