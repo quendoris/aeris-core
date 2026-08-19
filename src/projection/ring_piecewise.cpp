@@ -11,6 +11,13 @@
 namespace aeris::projection {
 namespace {
 
+[[nodiscard]] const ProjectionAdapter* effective_adapter(
+    const RingProjectionOptions& options
+) noexcept {
+    if (options.adapter != nullptr) return options.adapter;
+    return &projection_adapter_for_primitive(options.primitive);
+}
+
 [[nodiscard]] bool compatible_adapter(const ProjectionAdapter* const adapter) noexcept {
     if (adapter == nullptr) return false;
     const ProjectionDescriptor descriptor = adapter->descriptor();
@@ -23,7 +30,7 @@ namespace {
 [[nodiscard]] bool valid_piecewise_options(
     const RingProjectionOptions& options
 ) noexcept {
-    return compatible_adapter(options.adapter) &&
+    return compatible_adapter(effective_adapter(options)) &&
            std::isfinite(options.central_meridian_rad) &&
            std::isfinite(options.relative_area_tolerance) &&
            options.relative_area_tolerance >= 0.0 &&
