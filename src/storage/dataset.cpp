@@ -2,11 +2,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "aeris/storage/dataset.hpp"
 
+#include "aeris/util/text.hpp"
 #include "feature_property_detail.hpp"
 #include "sqlite_detail.hpp"
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <climits>
 #include <cmath>
 #include <cstring>
@@ -26,6 +28,7 @@ static_assert(std::numeric_limits<double>::is_iec559,
 
 constexpr std::size_t kMaxIdentifierBytes = 255U;
 constexpr std::size_t kMaxUriBytes = 4096U;
+constexpr std::size_t kMaxRelativePathBytes = 4096U;
 constexpr std::size_t kMaxResourcesPerSource = 4096U;
 constexpr std::size_t kMaxFeaturesPerSource = 1'000'000U;
 constexpr std::size_t kMaxRingsPerFeature = 65'535U;
@@ -43,7 +46,46 @@ constexpr double kWindingTolerance =
     const std::size_t max_bytes,
     const bool allow_empty = false) noexcept {
     return (allow_empty || !value.empty()) && value.size() <= max_bytes &&
-           value.find('\0') == std::string::npos;
+           value.find('\0') == std::string::npos && util::is_valid_utf8_nul_free(value);
+}
+
+[[nodiscard]] bool canonical_relative_path(const std::string& value) noexcept {
+    if (!bounded_text(value, kMaxRelativePathBytes) || value.front() == '/' ||
+        value.back() == '/' || value.find('\\') != std::string::npos ||
+        value.find(':') != std::string::npos) {
+        return false;
+    }
+    std::size_t start = 0U;
+    while (start < value.size()) {
+        const std::size_t slash = value.find('/', start);
+        const std::size_t end = slash == std::string::npos ? value.size() : slash;
+        if (end == start) return false;
+        const std::string_view segment(value.data() + start, end - start);
+        if (segment == "." || segment == "..") return false;
+        start = end + 1U;
+    }
+    return true;
+}
+
+[[nodiscard]] bool portable_retrieval_uri(const std::string& value) noexcept {
+    if (!bounded_text(value, kMaxUriBytes)) return false;
+    const std::size_t colon = value.find(':');
+    if (colon == std::string::npos || colon == 0U) return false;
+    const unsigned char first = static_cast<unsigned char>(value.front());
+    if (!std::isalpha(first)) return false;
+    for (std::size_t index = 1U; index < colon; ++index) {
+        const unsigned char c = static_cast<unsigned char>(value[index]);
+        if (!(std::isalnum(c) || c == '+' || c == '-' || c == '.')) return false;
+    }
+    std::string scheme = value.substr(0U, colon);
+    std::transform(scheme.begin(), scheme.end(), scheme.begin(), [](const unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    if (scheme == "file") return false;
+    for (const unsigned char c : value) {
+        if (c <= 0x20U || c == 0x7fU) return false;
+    }
+    return true;
 }
 
 [[nodiscard]] double canonical_zero(const double value) noexcept {
@@ -53,7 +95,7 @@ constexpr double kWindingTolerance =
 Status validate_resource(const SourceResourceRecord& resource) {
     if (!bounded_text(resource.logical_name, kMaxIdentifierBytes)) {
         return {StorageError::invalid_argument,
-                "source resource logical name is empty, contains NUL, or exceeds 255 bytes"};
+                "source resource logical name is empty, invalid UTF-8/NUL, or exceeds 255 bytes"};
     }
     if (!is_canonical_sha256(resource.sha256)) {
         return {StorageError::invalid_argument,
@@ -63,6 +105,20 @@ Status validate_resource(const SourceResourceRecord& resource) {
         *resource.size_bytes > static_cast<std::uint64_t>(std::numeric_limits<sqlite3_int64>::max())) {
         return {StorageError::invalid_argument,
                 "source resource byte length exceeds SQLite signed integer range"};
+    }
+    const bool has_path = !resource.relative_path.empty();
+    const bool has_uri = !resource.retrieval_uri.empty();
+    if (has_path != has_uri) {
+        return {StorageError::invalid_argument,
+                "source resource acquisition recipe requires relative_path and retrieval_uri together"};
+    }
+    if (has_path && !canonical_relative_path(resource.relative_path)) {
+        return {StorageError::invalid_argument,
+                "source resource relative path is not canonical portable snapshot syntax"};
+    }
+    if (has_uri && !portable_retrieval_uri(resource.retrieval_uri)) {
+        return {StorageError::invalid_argument,
+                "source resource retrieval URI is not portable URI syntax"};
     }
     return Status::success();
 }
@@ -78,7 +134,7 @@ Status validate_source(const SourceSnapshotRecord& record) {
         !bounded_text(record.source_uri, kMaxUriBytes) ||
         !bounded_text(record.worldview, kMaxIdentifierBytes, true)) {
         return {StorageError::invalid_argument,
-                "source snapshot text field violates canonical storage bounds"};
+                "source snapshot text field violates canonical storage bounds/UTF-8"};
     }
     if (record.capability_bits == 0U) {
         return {StorageError::invalid_argument,
@@ -88,9 +144,13 @@ Status validate_source(const SourceSnapshotRecord& record) {
         return {StorageError::invalid_argument,
                 "source snapshot content SHA-256 must be 64 lowercase hexadecimal characters"};
     }
+    if (record.materialization_state != SourceMaterializationState::materialized) {
+        return {StorageError::invalid_argument,
+                "source dataset mutation requires materialized source state"};
+    }
     if (!is_canonical_utc_timestamp(record.retrieved_at_utc)) {
         return {StorageError::invalid_argument,
-                "source snapshot retrieval timestamp is not canonical Gregorian UTC"};
+                "materialized source retrieval timestamp is not canonical Gregorian UTC"};
     }
     if (record.resources.size() > kMaxResourcesPerSource) {
         return {StorageError::invalid_argument,
@@ -98,12 +158,18 @@ Status validate_source(const SourceSnapshotRecord& record) {
     }
 
     std::set<std::string> logical_names;
+    std::set<std::string> relative_paths;
     for (const SourceResourceRecord& resource : record.resources) {
         Status status = validate_resource(resource);
         if (!status) return status;
         if (!logical_names.insert(resource.logical_name).second) {
             return {StorageError::invalid_argument,
                     "source snapshot contains a duplicate logical resource name"};
+        }
+        if (!resource.relative_path.empty() &&
+            !relative_paths.insert(resource.relative_path).second) {
+            return {StorageError::invalid_argument,
+                    "source snapshot acquisition recipe contains a duplicate relative path"};
         }
     }
     return Status::success();
@@ -259,14 +325,14 @@ void canonicalize_geometry(SourceGeometryRecord& record) {
               });
 }
 
-[[nodiscard]] bool equal_resource(
+[[nodiscard]] bool equal_resource_identity(
     const SourceResourceRecord& a,
     const SourceResourceRecord& b) noexcept {
     return a.logical_name == b.logical_name && a.sha256 == b.sha256 &&
            a.size_bytes == b.size_bytes;
 }
 
-[[nodiscard]] bool equal_source(
+[[nodiscard]] bool equal_source_identity(
     const SourceSnapshotRecord& a,
     const SourceSnapshotRecord& b) noexcept {
     if (a.source_id != b.source_id || a.adapter_id != b.adapter_id ||
@@ -274,12 +340,11 @@ void canonicalize_geometry(SourceGeometryRecord& record) {
         a.provider != b.provider || a.dataset != b.dataset || a.snapshot != b.snapshot ||
         a.dataset_version != b.dataset_version || a.source_uri != b.source_uri ||
         a.license_id != b.license_id || a.content_sha256 != b.content_sha256 ||
-        a.retrieved_at_utc != b.retrieved_at_utc || a.worldview != b.worldview ||
-        a.resources.size() != b.resources.size()) {
+        a.worldview != b.worldview || a.resources.size() != b.resources.size()) {
         return false;
     }
     for (std::size_t index = 0U; index < a.resources.size(); ++index) {
-        if (!equal_resource(a.resources[index], b.resources[index])) return false;
+        if (!equal_resource_identity(a.resources[index], b.resources[index])) return false;
     }
     return true;
 }
@@ -398,9 +463,7 @@ Status validate_project_connection(sqlite3* db, const ProjectStore& project) {
 
     std::string uuid;
     if (!(status = detail::query_single_text(
-              db, "SELECT project_uuid FROM aeris_meta WHERE id=1;", uuid))) {
-        return status;
-    }
+              db, "SELECT project_uuid FROM aeris_meta WHERE id=1;", uuid))) return status;
     if (uuid != project.metadata().project_uuid) {
         return {StorageError::schema_invalid,
                 "source dataset project UUID differs from the validated project handle"};
@@ -438,7 +501,9 @@ Status insert_source(sqlite3* db, const SourceSnapshotRecord& record) {
     detail::StmtPtr source_stmt;
     Status status = detail::prepare(
         db,
-        "INSERT INTO aeris_source(source_id,adapter_id,capability_bits,temporal_class,provider,dataset,snapshot,dataset_version,source_uri,license_id,content_sha256,retrieved_at_utc,worldview) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?);",
+        "INSERT INTO aeris_source(source_id,adapter_id,capability_bits,temporal_class,provider,dataset,"
+        "snapshot,dataset_version,source_uri,license_id,content_sha256,retrieved_at_utc,worldview,"
+        "materialization_state) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?);",
         source_stmt);
     if (!status) return status;
 
@@ -455,14 +520,18 @@ Status insert_source(sqlite3* db, const SourceSnapshotRecord& record) {
     if (!(status = detail::bind_text(db, source_stmt.get(), index++, record.license_id))) return status;
     if (!(status = detail::bind_text(db, source_stmt.get(), index++, record.content_sha256))) return status;
     if (!(status = detail::bind_text(db, source_stmt.get(), index++, record.retrieved_at_utc))) return status;
-    if (!(status = detail::bind_text(db, source_stmt.get(), index, record.worldview))) return status;
+    if (!(status = detail::bind_text(db, source_stmt.get(), index++, record.worldview))) return status;
+    if (!(status = detail::bind_int64(
+              db, source_stmt.get(), index,
+              static_cast<sqlite3_int64>(static_cast<std::uint8_t>(record.materialization_state))))) return status;
     if (!(status = detail::step_done(db, source_stmt.get()))) return status;
 
     for (const SourceResourceRecord& resource : record.resources) {
         detail::StmtPtr resource_stmt;
         status = detail::prepare(
             db,
-            "INSERT INTO aeris_source_resource(source_id,logical_name,sha256,size_bytes) VALUES(?,?,?,?);",
+            "INSERT INTO aeris_source_resource(source_id,logical_name,sha256,size_bytes,relative_path,"
+            "retrieval_uri) VALUES(?,?,?,?,?,?);",
             resource_stmt);
         if (!status) return status;
         if (!(status = detail::bind_text(db, resource_stmt.get(), 1, record.source_id))) return status;
@@ -471,16 +540,36 @@ Status insert_source(sqlite3* db, const SourceSnapshotRecord& record) {
         if (resource.size_bytes) {
             if (!(status = detail::bind_int64(
                       db, resource_stmt.get(), 4,
-                      static_cast<sqlite3_int64>(*resource.size_bytes)))) {
-                return status;
-            }
+                      static_cast<sqlite3_int64>(*resource.size_bytes)))) return status;
         } else if (sqlite3_bind_null(resource_stmt.get(), 4) != SQLITE_OK) {
             return {StorageError::sqlite_failure,
                     detail::sqlite_message(db, "sqlite bind NULL failed")};
         }
+        if (!(status = detail::bind_text(db, resource_stmt.get(), 5, resource.relative_path))) return status;
+        if (!(status = detail::bind_text(db, resource_stmt.get(), 6, resource.retrieval_uri))) return status;
         if (!(status = detail::step_done(db, resource_stmt.get()))) return status;
     }
     return Status::success();
+}
+
+Status mark_source_materialized(
+    sqlite3* db,
+    const std::string& source_id,
+    const std::string& retrieved_at_utc) {
+    detail::StmtPtr stmt;
+    Status status = detail::prepare(
+        db,
+        "UPDATE aeris_source SET materialization_state=1,retrieved_at_utc=? "
+        "WHERE source_id=? AND materialization_state=0;",
+        stmt);
+    if (status) status = detail::bind_text(db, stmt.get(), 1, retrieved_at_utc);
+    if (status) status = detail::bind_text(db, stmt.get(), 2, source_id);
+    if (status) status = detail::step_done(db, stmt.get());
+    if (status && sqlite3_changes(db) != 1) {
+        return {StorageError::schema_invalid,
+                "source materialization transition did not affect exactly one referenced source"};
+    }
+    return status;
 }
 
 [[nodiscard]] std::array<unsigned char, 8> encode_f64le(const double input) noexcept {
@@ -657,6 +746,7 @@ SourceDatasetMutationResult store_source_dataset(
     }
 
     SourceDatasetRecord record = input;
+    record.source.materialization_state = SourceMaterializationState::materialized;
     canonicalize_source(record.source);
     canonicalize_geometry(record.geometry);
     if (record.feature_properties.has_value()) {
@@ -681,13 +771,9 @@ SourceDatasetMutationResult store_source_dataset(
     detail::DbPtr db;
     status = detail::open_database(project.path(), SQLITE_OPEN_READWRITE, db);
     if (!status) return {std::move(status), false, false};
-    if (!(status = validate_project_connection(db.get(), project))) {
-        return {std::move(status), false, false};
-    }
-    if (!(status = detail::configure_durable(db.get()))) {
-        return {std::move(status), false, false};
-    }
-    if (!(status = detail::begin_immediate(db.get()))) {
+    if (!(status = validate_project_connection(db.get(), project)) ||
+        !(status = detail::configure_durable(db.get())) ||
+        !(status = detail::begin_immediate(db.get()))) {
         return {std::move(status), false, false};
     }
 
@@ -697,16 +783,12 @@ SourceDatasetMutationResult store_source_dataset(
     status = row_exists(
         db.get(), "SELECT 1 FROM aeris_source WHERE source_id=?;",
         record.source.source_id, source_present);
-    if (status) {
-        status = row_exists(
-            db.get(), "SELECT 1 FROM aeris_source_geometry WHERE source_id=?;",
-            record.source.source_id, geometry_present);
-    }
-    if (status) {
-        status = row_exists(
-            db.get(), "SELECT 1 FROM aeris_source_feature_properties WHERE source_id=?;",
-            record.source.source_id, properties_present);
-    }
+    if (status) status = row_exists(
+        db.get(), "SELECT 1 FROM aeris_source_geometry WHERE source_id=?;",
+        record.source.source_id, geometry_present);
+    if (status) status = row_exists(
+        db.get(), "SELECT 1 FROM aeris_source_feature_properties WHERE source_id=?;",
+        record.source.source_id, properties_present);
     if (!status) {
         detail::rollback(db.get());
         return {std::move(status), false, false};
@@ -724,8 +806,9 @@ SourceDatasetMutationResult store_source_dataset(
                 false, false};
     }
 
+    std::optional<SourceSnapshotRecord> existing_source;
+    bool transition_reference = false;
     if (source_present) {
-        std::optional<SourceSnapshotRecord> existing_source;
         status = read_existing_source(project, record.source.source_id, existing_source);
         if (!status || !existing_source.has_value()) {
             detail::rollback(db.get());
@@ -734,10 +817,25 @@ SourceDatasetMutationResult store_source_dataset(
                      "source existence probe disagrees with canonical provenance reader"},
                     false, false};
         }
-        if (!equal_source(*existing_source, record.source)) {
+        if (!equal_source_identity(*existing_source, record.source)) {
             detail::rollback(db.get());
             return {{StorageError::record_exists,
-                     "source ID already exists with different immutable provenance"},
+                     "source ID already exists with different immutable content identity"},
+                    false, false};
+        }
+
+        transition_reference =
+            existing_source->materialization_state == SourceMaterializationState::referenced;
+        if (transition_reference && (geometry_present || properties_present)) {
+            detail::rollback(db.get());
+            return {{StorageError::schema_invalid,
+                     "referenced source already owns canonical decoded channels"},
+                    false, false};
+        }
+        if (!transition_reference && !geometry_present) {
+            detail::rollback(db.get());
+            return {{StorageError::schema_invalid,
+                     "materialized source is missing canonical geometry"},
                     false, false};
         }
     }
@@ -785,7 +883,8 @@ SourceDatasetMutationResult store_source_dataset(
     const bool insert_properties_needed =
         record.feature_properties.has_value() && !properties_present;
 
-    if (!insert_source_needed && !insert_geometry_needed && !insert_properties_needed) {
+    if (!insert_source_needed && !insert_geometry_needed && !insert_properties_needed &&
+        !transition_reference) {
         detail::rollback(db.get());
         status = project.refresh_metadata();
         if (!status) return {std::move(status), false, false};
@@ -796,6 +895,10 @@ SourceDatasetMutationResult store_source_dataset(
     if (status && insert_geometry_needed) status = insert_geometry(db.get(), record.geometry);
     if (status && insert_properties_needed) {
         status = detail::insert_feature_properties(db.get(), *record.feature_properties);
+    }
+    if (status && transition_reference) {
+        status = mark_source_materialized(
+            db.get(), record.source.source_id, record.source.retrieved_at_utc);
     }
     if (status) status = advance_project_revision(db.get(), project, modified_utc);
     if (!status) {
