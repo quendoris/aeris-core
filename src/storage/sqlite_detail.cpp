@@ -6,6 +6,73 @@
 #include <utility>
 
 namespace aeris::storage::detail {
+namespace {
+
+Status install_source_materialization_guards(sqlite3* db) {
+    sqlite3_stmt* raw = nullptr;
+    const int prepare_rc = sqlite3_prepare_v2(
+        db,
+        "SELECT 1 FROM sqlite_schema WHERE type='table' AND name='aeris_source' LIMIT 1;",
+        -1,
+        &raw,
+        nullptr);
+    if (prepare_rc != SQLITE_OK) {
+        return {StorageError::sqlite_failure,
+                sqlite_message(db, "could not inspect source schema before installing guards")};
+    }
+
+    const int step_rc = sqlite3_step(raw);
+    (void)sqlite3_finalize(raw);
+    if (step_rc == SQLITE_DONE) {
+        // Project creation configures durability before the schema exists. The
+        // published project is reopened immediately after schema creation, at
+        // which point these persistent triggers are installed.
+        return Status::success();
+    }
+    if (step_rc != SQLITE_ROW) {
+        return {StorageError::sqlite_failure,
+                sqlite_message(db, "could not inspect source schema before installing guards")};
+    }
+
+    return exec(
+        db,
+        "CREATE TRIGGER IF NOT EXISTS aeris_guard_source_materialization_monotonic "
+        "BEFORE UPDATE OF materialization_state ON aeris_source "
+        "WHEN OLD.materialization_state=1 AND NEW.materialization_state<>1 "
+        "BEGIN SELECT RAISE(ABORT,'AERIS materialized source cannot be demoted'); END;"
+
+        "CREATE TRIGGER IF NOT EXISTS aeris_guard_freeze_referenced_source "
+        "BEFORE UPDATE OF frozen ON aeris_meta "
+        "WHEN NEW.frozen=1 AND EXISTS("
+        "SELECT 1 FROM aeris_layer_source ls "
+        "JOIN aeris_source s ON s.source_id=ls.source_id "
+        "WHERE s.materialization_state<>1) "
+        "BEGIN SELECT RAISE(ABORT,'AERIS frozen project cannot bind referenced source'); END;"
+
+        "CREATE TRIGGER IF NOT EXISTS aeris_guard_frozen_layer_source_insert "
+        "BEFORE INSERT ON aeris_layer_source "
+        "WHEN EXISTS(SELECT 1 FROM aeris_meta WHERE id=1 AND frozen=1) "
+        "AND EXISTS(SELECT 1 FROM aeris_source s "
+        "WHERE s.source_id=NEW.source_id AND s.materialization_state<>1) "
+        "BEGIN SELECT RAISE(ABORT,'AERIS frozen project cannot bind referenced source'); END;"
+
+        "CREATE TRIGGER IF NOT EXISTS aeris_guard_frozen_layer_source_update "
+        "BEFORE UPDATE OF source_id ON aeris_layer_source "
+        "WHEN EXISTS(SELECT 1 FROM aeris_meta WHERE id=1 AND frozen=1) "
+        "AND EXISTS(SELECT 1 FROM aeris_source s "
+        "WHERE s.source_id=NEW.source_id AND s.materialization_state<>1) "
+        "BEGIN SELECT RAISE(ABORT,'AERIS frozen project cannot bind referenced source'); END;"
+
+        "CREATE TRIGGER IF NOT EXISTS aeris_guard_frozen_bound_source_demotion "
+        "BEFORE UPDATE OF materialization_state ON aeris_source "
+        "WHEN NEW.materialization_state<>1 "
+        "AND EXISTS(SELECT 1 FROM aeris_meta WHERE id=1 AND frozen=1) "
+        "AND EXISTS(SELECT 1 FROM aeris_layer_source ls WHERE ls.source_id=OLD.source_id) "
+        "BEGIN SELECT RAISE(ABORT,'AERIS frozen project cannot demote bound source'); END;"
+    );
+}
+
+}  // namespace
 
 void DbCloser::operator()(sqlite3* db) const noexcept {
     if (db != nullptr) {
@@ -71,7 +138,9 @@ Status configure_durable(sqlite3* db) {
     if (!status) return status;
     status = exec(db, "PRAGMA synchronous=EXTRA;");
     if (!status) return status;
-    return exec(db, "PRAGMA temp_store=MEMORY;");
+    status = exec(db, "PRAGMA temp_store=MEMORY;");
+    if (!status) return status;
+    return install_source_materialization_guards(db);
 }
 
 Status prepare(sqlite3* db, const char* sql, StmtPtr& out) {
