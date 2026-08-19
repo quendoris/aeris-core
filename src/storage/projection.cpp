@@ -60,10 +60,11 @@ constexpr double kTwoPi = 2.0 * kPi;
                     "unspecified projection requires zero central meridian and unspecified cut model"};
         }
     } else if (model == kProjectionModelSinusoidalV1 ||
-               model == kProjectionModelMollweideV1) {
+               model == kProjectionModelMollweideV1 ||
+               model == kProjectionModelLambertCylindricalEqualAreaV1) {
         if (cut != kProjectionCutModelSingleAntimeridianV1) {
             return {StorageError::invalid_argument,
-                    "current Sinusoidal/Mollweide projection requires single-antimeridian cut model"};
+                    "current built-in equal-area projection requires single-antimeridian cut model"};
         }
     }
     return Status::success();
