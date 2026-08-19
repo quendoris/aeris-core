@@ -35,6 +35,8 @@ bool copy_text_property(
 }  // namespace
 
 void apply_source_presentation(SceneData& scene, const source::Result& source) {
+    if (!scene.ok || scene.canceled) return;
+
     scene.political = false;
     if (scene.features.size() != source.features.size()) {
         scene.ok = false;
