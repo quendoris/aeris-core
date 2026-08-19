@@ -146,8 +146,10 @@ SourceBridgeResult record_verified_source_snapshot(
         storage::SourceResourceRecord stored{};
         stored.logical_name = resource.logical_name;
         stored.sha256 = resource.sha256;
-        stored.relative_path = resource.relative_path.generic_u8string();
-        stored.retrieval_uri = resource.retrieval_uri;
+        if (!resource.retrieval_uri.empty()) {
+            stored.relative_path = resource.relative_path.generic_u8string();
+            stored.retrieval_uri = resource.retrieval_uri;
+        }
         if (resource.size_bytes.has_value()) {
             if (*resource.size_bytes >
                 static_cast<std::uintmax_t>(std::numeric_limits<std::uint64_t>::max())) {
