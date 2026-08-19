@@ -4,7 +4,7 @@
 #pragma once
 
 #include "aeris/geometry/geographic.hpp"
-#include "aeris/projection/primitives.hpp"
+#include "aeris/projection/wgs84.hpp"
 
 #include <array>
 #include <cstdint>
@@ -46,11 +46,6 @@ struct GeodeticResult final {
     }
 };
 
-// Projection adapters operate on canonical WGS84 geodetic coordinates and own
-// the WGS84 -> authalic-sphere conversion required by AERIS equal-area maps.
-// The verified ring pipeline consumes this interface rather than switching on a
-// hard-coded projection enum, so adding another equal-area unfolding does not
-// require viewer-specific geometry code.
 class ProjectionAdapter {
 public:
     virtual ~ProjectionAdapter() = default;
@@ -64,8 +59,6 @@ public:
         double radius_m = geo::authalic_radius_m()
     ) const noexcept = 0;
 
-    // Returns canonical WGS84 longitude/latitude when the planar coordinate has
-    // a unique inverse. Pole singularities remain explicit MathError states.
     [[nodiscard]] virtual GeodeticResult inverse_wgs84(
         double x,
         double y,
@@ -78,10 +71,14 @@ public:
 [[nodiscard]] const ProjectionAdapter& mollweide_projection_adapter() noexcept;
 [[nodiscard]] const ProjectionAdapter& lambert_cylindrical_equal_area_projection_adapter() noexcept;
 
+// Pre-1.0 compatibility bridge for internal tools that still name one of the
+// original mathematical primitives. New project/view code should persist or
+// select adapters by model_id and pass ProjectionAdapter directly.
+[[nodiscard]] const ProjectionAdapter& projection_adapter_for_primitive(
+    EqualAreaPrimitive primitive) noexcept;
+
 using BuiltinProjectionAdapters = std::array<const ProjectionAdapter*, 3U>;
 
-// Stable catalog order is intentional: frontends may present this list directly
-// while project files persist only the versioned model_id.
 [[nodiscard]] BuiltinProjectionAdapters builtin_projection_adapters() noexcept;
 [[nodiscard]] const ProjectionAdapter* find_builtin_projection_adapter(
     std::string_view model_id) noexcept;
