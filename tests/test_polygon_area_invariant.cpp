@@ -3,8 +3,8 @@
 
 #include "aeris/geometry/geographic.hpp"
 #include "aeris/geometry/planar.hpp"
+#include "aeris/projection/adapter.hpp"
 #include "aeris/projection/subdivide.hpp"
-#include "aeris/projection/wgs84.hpp"
 
 #include "aeris/geo/wgs84.hpp"
 
@@ -32,8 +32,7 @@ void expect_true(const std::string_view name, const bool condition) {
 struct EdgeContext final {
     aeris::geometry::GeodeticPoint start{};
     aeris::geometry::GeodeticPoint end{};
-    aeris::projection::EqualAreaPrimitive primitive =
-        aeris::projection::EqualAreaPrimitive::sinusoidal;
+    const aeris::projection::ProjectionAdapter* adapter = nullptr;
     double central_meridian_rad = 0.0;
 };
 
@@ -46,31 +45,33 @@ struct EdgeContext final {
     }
 
     const auto* const context = static_cast<const EdgeContext*>(opaque_context);
+    if (context->adapter == nullptr) {
+        return {{}, aeris::geo::MathError::numerical_domain_error};
+    }
     const auto point = aeris::geometry::interpolate_wgs84_linear_edge(
         context->start,
         context->end,
         parameter
     );
 
-    return aeris::projection::project_wgs84_primitive(
+    return context->adapter->forward_wgs84(
         point.longitude_rad,
         point.latitude_rad,
-        context->primitive,
         context->central_meridian_rad
     );
 }
 
 [[nodiscard]] bool project_ring(
     const aeris::geometry::LinearRing& ring,
-    const aeris::projection::EqualAreaPrimitive primitive,
+    const aeris::projection::ProjectionAdapter& adapter,
     const double central_meridian_rad,
     std::vector<aeris::geometry::PlanarPoint>& output
 ) {
     output.clear();
 
     const aeris::projection::SubdivisionOptions options{
-        0.5,       // maximum sampled chord deviation, metres
-        10.0,      // sampled local area envelope, square metres
+        0.5,
+        10.0,
         32U,
         250'000U,
     };
@@ -84,7 +85,7 @@ struct EdgeContext final {
                   ring.closing_longitude_rad,
                   ring.vertices.front().latitude_rad,
               };
-        context.primitive = primitive;
+        context.adapter = &adapter;
         context.central_meridian_rad = central_meridian_rad;
 
         const auto edge = aeris::projection::subdivide_projected_curve(
@@ -117,34 +118,26 @@ void check_area_invariant(
 ) {
     const auto canonical = aeris::geometry::canonicalize_wgs84_linear_ring(input);
     expect_true("area invariant ring canonicalizes", canonical.ok());
-    if (!canonical.ok()) {
-        return;
-    }
+    if (!canonical.ok()) return;
 
     const auto geographic_area =
         aeris::geometry::signed_wgs84_linear_ring_area(canonical.value);
     expect_true("area invariant WGS84 area succeeds", geographic_area.ok());
-    if (!geographic_area.ok()) {
-        return;
-    }
+    if (!geographic_area.ok()) return;
 
-    constexpr aeris::projection::EqualAreaPrimitive primitives[] = {
-        aeris::projection::EqualAreaPrimitive::sinusoidal,
-        aeris::projection::EqualAreaPrimitive::mollweide,
-    };
+    for (const auto* adapter : aeris::projection::builtin_projection_adapters()) {
+        expect_true("area invariant adapter is present", adapter != nullptr);
+        if (adapter == nullptr) continue;
 
-    for (const auto primitive : primitives) {
         std::vector<aeris::geometry::PlanarPoint> projected;
         const bool projected_ok = project_ring(
             canonical.value,
-            primitive,
+            *adapter,
             central_meridian_rad,
             projected
         );
         expect_true("area invariant projection succeeds", projected_ok);
-        if (!projected_ok) {
-            continue;
-        }
+        if (!projected_ok) continue;
 
         const double planar_area = aeris::geometry::signed_planar_area(projected);
         expect_true("projected polygon area is finite", std::isfinite(planar_area));
@@ -158,7 +151,7 @@ void check_area_invariant(
         if (!std::isfinite(relative_error) || relative_error > 1e-8) {
             ++failures;
             std::cerr << "FAIL " << name
-                      << ": primitive=" << static_cast<int>(primitive)
+                      << ": adapter=" << adapter->descriptor().model_id
                       << " geographic=" << geographic_area.signed_area_m2
                       << " planar=" << planar_area
                       << " relative_error=" << relative_error
