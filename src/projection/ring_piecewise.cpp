@@ -11,10 +11,27 @@
 namespace aeris::projection {
 namespace {
 
+[[nodiscard]] const ProjectionAdapter* effective_adapter(
+    const RingProjectionOptions& options
+) noexcept {
+    if (options.adapter != nullptr) return options.adapter;
+    return &projection_adapter_for_primitive(options.primitive);
+}
+
+[[nodiscard]] bool compatible_adapter(const ProjectionAdapter* const adapter) noexcept {
+    if (adapter == nullptr) return false;
+    const ProjectionDescriptor descriptor = adapter->descriptor();
+    return !descriptor.model_id.empty() &&
+           descriptor.cut_model_id == kProjectionCutSingleAntimeridianV1 &&
+           descriptor.area_contract == ProjectionAreaContract::equal_area &&
+           descriptor.cut_topology == ProjectionCutTopology::single_antimeridian;
+}
+
 [[nodiscard]] bool valid_piecewise_options(
     const RingProjectionOptions& options
 ) noexcept {
-    return std::isfinite(options.central_meridian_rad) &&
+    return compatible_adapter(effective_adapter(options)) &&
+           std::isfinite(options.central_meridian_rad) &&
            std::isfinite(options.relative_area_tolerance) &&
            options.relative_area_tolerance >= 0.0 &&
            std::isfinite(options.absolute_area_tolerance_m2) &&

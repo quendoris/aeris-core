@@ -15,6 +15,8 @@ inline constexpr std::string_view kProjectionModelSinusoidalV1 =
     "aeris.projection.sinusoidal.v1";
 inline constexpr std::string_view kProjectionModelMollweideV1 =
     "aeris.projection.mollweide.v1";
+inline constexpr std::string_view kProjectionModelLambertCylindricalEqualAreaV1 =
+    "aeris.projection.lambert-cylindrical-equal-area.v1";
 
 inline constexpr std::string_view kProjectionCutModelUnspecifiedV1 =
     "aeris.cut.unspecified.v1";
@@ -32,8 +34,8 @@ struct ProjectProjectionRecord final {
     double central_meridian_rad{0.0};
 
     // Explicit versioned topology contract for the cut drawn on the reference
-    // globe before flattening. Current Sinusoidal/Mollweide runtime semantics use
-    // the single antimeridian opposite the central meridian.
+    // globe before flattening. Current built-in equal-area projections use the
+    // single antimeridian opposite the central meridian.
     std::string cut_model_id;
 };
 

@@ -15,10 +15,17 @@ constexpr double kTwoPi = 2.0 * geo::kPi;
 constexpr double kSeamTolerance =
     512.0 * std::numeric_limits<double>::epsilon() * geo::kPi;
 
+[[nodiscard]] const ProjectionAdapter* effective_adapter(
+    const RingProjectionOptions& options
+) noexcept {
+    if (options.adapter != nullptr) return options.adapter;
+    return &projection_adapter_for_primitive(options.primitive);
+}
+
 struct EdgeContext final {
     geometry::GeodeticPoint start{};
     geometry::GeodeticPoint end{};
-    EqualAreaPrimitive primitive = EqualAreaPrimitive::sinusoidal;
+    const ProjectionAdapter* adapter = nullptr;
     double central_meridian_rad = 0.0;
 };
 
@@ -31,16 +38,18 @@ struct EdgeContext final {
     }
 
     const auto* const context = static_cast<const EdgeContext*>(opaque_context);
+    if (context->adapter == nullptr) {
+        return {{}, geo::MathError::numerical_domain_error};
+    }
     const geometry::GeodeticPoint point = geometry::interpolate_wgs84_linear_edge(
         context->start,
         context->end,
         parameter
     );
 
-    return project_wgs84_primitive(
+    return context->adapter->forward_wgs84(
         point.longitude_rad,
         point.latitude_rad,
-        context->primitive,
         context->central_meridian_rad
     );
 }
@@ -49,7 +58,7 @@ struct SeamContext final {
     double longitude_rad = 0.0;
     double start_latitude_rad = 0.0;
     double end_latitude_rad = 0.0;
-    EqualAreaPrimitive primitive = EqualAreaPrimitive::sinusoidal;
+    const ProjectionAdapter* adapter = nullptr;
     double central_meridian_rad = 0.0;
 };
 
@@ -62,20 +71,33 @@ struct SeamContext final {
     }
 
     const auto* const context = static_cast<const SeamContext*>(opaque_context);
+    if (context->adapter == nullptr) {
+        return {{}, geo::MathError::numerical_domain_error};
+    }
     const double latitude =
         context->start_latitude_rad +
         parameter * (context->end_latitude_rad - context->start_latitude_rad);
 
-    return project_wgs84_primitive(
+    return context->adapter->forward_wgs84(
         context->longitude_rad,
         latitude,
-        context->primitive,
         context->central_meridian_rad
     );
 }
 
+[[nodiscard]] bool compatible_adapter(const ProjectionAdapter* const adapter) noexcept {
+    if (adapter == nullptr) return false;
+    const ProjectionDescriptor descriptor = adapter->descriptor();
+    return !descriptor.model_id.empty() &&
+           !descriptor.display_name.empty() &&
+           descriptor.cut_model_id == kProjectionCutSingleAntimeridianV1 &&
+           descriptor.area_contract == ProjectionAreaContract::equal_area &&
+           descriptor.cut_topology == ProjectionCutTopology::single_antimeridian;
+}
+
 [[nodiscard]] bool valid_options(const RingProjectionOptions& options) noexcept {
-    return std::isfinite(options.central_meridian_rad) &&
+    return compatible_adapter(effective_adapter(options)) &&
+           std::isfinite(options.central_meridian_rad) &&
            std::isfinite(options.relative_area_tolerance) &&
            options.relative_area_tolerance >= 0.0 &&
            std::isfinite(options.absolute_area_tolerance_m2) &&
@@ -147,10 +169,6 @@ struct SeamIntersection final {
         for (long long k = first_k; k <= last_k; ++k) {
             const double seam = base_seam + static_cast<double>(k) * kTwoPi;
             const double parameter = (seam - start.longitude_rad) / delta;
-
-            // Half-open ownership (0, 1] means an exact seam vertex belongs to
-            // its incoming edge only. This prevents double-counting the same
-            // topological crossing on adjacent edges.
             if (parameter <= parameter_tolerance ||
                 parameter > 1.0 + parameter_tolerance) {
                 continue;
@@ -255,9 +273,6 @@ void append_shifted_point(
     constexpr double endpoint_tolerance =
         64.0 * std::numeric_limits<double>::epsilon();
 
-    // Continue from the seam crossing to the canonical closure point using the
-    // post-crossing longitude branch. If the crossing is already exactly the
-    // edge endpoint, that endpoint is the start-seam point and is not repeated.
     for (std::size_t vertex = crossing_edge + 1U; vertex <= vertex_count; ++vertex) {
         if (vertex == crossing_edge + 1U &&
             crossing.parameter >= 1.0 - endpoint_tolerance) {
@@ -274,9 +289,6 @@ void append_shifted_point(
         append_shifted_point(branch.coastline_vertices, point, shift_after);
     }
 
-    // The canonical closure point is physically the original first vertex.
-    // Resume at vertex 1 on the pre-crossing longitude branch; adding vertex 0
-    // again would duplicate that physical point.
     for (std::size_t vertex = 1U; vertex <= crossing_edge; ++vertex) {
         append_shifted_point(
             branch.coastline_vertices,
@@ -337,7 +349,7 @@ void append_curve_points(
     EdgeContext context{};
     context.start = start;
     context.end = end;
-    context.primitive = options.primitive;
+    context.adapter = effective_adapter(options);
     context.central_meridian_rad = options.central_meridian_rad;
 
     SubdivisionResult edge = subdivide_projected_curve(
@@ -368,7 +380,7 @@ void append_curve_points(
     to_pole.longitude_rad = branch.end_seam_longitude_rad;
     to_pole.start_latitude_rad = branch.seam_latitude_rad;
     to_pole.end_latitude_rad = branch.pole_latitude_rad;
-    to_pole.primitive = options.primitive;
+    to_pole.adapter = effective_adapter(options);
     to_pole.central_meridian_rad = options.central_meridian_rad;
 
     SubdivisionResult first = subdivide_projected_curve(
@@ -389,7 +401,7 @@ void append_curve_points(
     from_pole.longitude_rad = branch.start_seam_longitude_rad;
     from_pole.start_latitude_rad = branch.pole_latitude_rad;
     from_pole.end_latitude_rad = branch.seam_latitude_rad;
-    from_pole.primitive = options.primitive;
+    from_pole.adapter = effective_adapter(options);
     from_pole.central_meridian_rad = options.central_meridian_rad;
 
     SubdivisionResult second = subdivide_projected_curve(

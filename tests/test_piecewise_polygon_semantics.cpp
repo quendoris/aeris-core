@@ -41,10 +41,10 @@ void expect_true(const std::string_view name, const bool condition) {
 
 [[nodiscard]] aeris::projection::PiecewiseRingProjectionResult project(
     const aeris::geometry::LinearRing& ring,
-    const aeris::projection::EqualAreaPrimitive primitive
+    const aeris::projection::ProjectionAdapter& adapter
 ) {
     aeris::projection::RingProjectionOptions options{};
-    options.primitive = primitive;
+    options.adapter = &adapter;
     options.relative_area_tolerance = 1e-9;
     options.absolute_area_tolerance_m2 = 1.0;
     options.initial_geometric_tolerance_m = 8.0;
@@ -58,7 +58,7 @@ void expect_true(const std::string_view name, const bool condition) {
 }
 
 void test_seam_split_exterior_and_hole(
-    const aeris::projection::EqualAreaPrimitive primitive
+    const aeris::projection::ProjectionAdapter& adapter
 ) {
     const auto exterior = make_ring(
         {
@@ -80,14 +80,15 @@ void test_seam_split_exterior_and_hole(
         aeris::geometry::RingInteriorSide::right
     );
 
-    const auto exterior_projected = project(exterior, primitive);
-    const auto hole_projected = project(hole, primitive);
+    const auto exterior_projected = project(exterior, adapter);
+    const auto hole_projected = project(hole, adapter);
 
     expect_true("split exterior projects", exterior_projected.ok());
     expect_true("split hole projects", hole_projected.ok());
     if (!exterior_projected.ok() || !hole_projected.ok()) {
         std::cerr
-            << "  exterior_error=" << static_cast<int>(exterior_projected.error)
+            << "  adapter=" << adapter.descriptor().model_id
+            << " exterior_error=" << static_cast<int>(exterior_projected.error)
             << " exterior_seam_error=" << static_cast<int>(exterior_projected.seam_error)
             << " exterior_piece_error=" << static_cast<int>(exterior_projected.piece_error)
             << " hole_error=" << static_cast<int>(hole_projected.error)
@@ -125,12 +126,13 @@ void test_seam_split_exterior_and_hole(
 }  // namespace
 
 int main() {
-    test_seam_split_exterior_and_hole(
-        aeris::projection::EqualAreaPrimitive::sinusoidal
-    );
-    test_seam_split_exterior_and_hole(
-        aeris::projection::EqualAreaPrimitive::mollweide
-    );
+    for (const auto* adapter : aeris::projection::builtin_projection_adapters()) {
+        if (adapter == nullptr) {
+            ++failures;
+            continue;
+        }
+        test_seam_split_exterior_and_hole(*adapter);
+    }
 
     if (failures != 0) {
         std::cerr << failures << " test assertion(s) failed\n";

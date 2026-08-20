@@ -18,9 +18,7 @@
 namespace {
 
 [[nodiscard]] bool parse_u32(const std::string_view text, std::uint32_t& value) noexcept {
-    if (text.empty()) {
-        return false;
-    }
+    if (text.empty()) return false;
     const char* const first = text.data();
     const char* const last = text.data() + text.size();
     const auto parsed = std::from_chars(first, last, value);
@@ -28,9 +26,7 @@ namespace {
 }
 
 [[nodiscard]] bool parse_size(const std::string_view text, std::size_t& value) noexcept {
-    if (text.empty()) {
-        return false;
-    }
+    if (text.empty()) return false;
     const char* const first = text.data();
     const char* const last = text.data() + text.size();
     const auto parsed = std::from_chars(first, last, value);
@@ -42,9 +38,7 @@ namespace {
     const std::uint32_t record_number
 ) noexcept {
     for (const auto& record : source.records) {
-        if (record.record_number == record_number) {
-            return &record;
-        }
+        if (record.record_number == record_number) return &record;
     }
     return nullptr;
 }
@@ -101,9 +95,7 @@ void print_seam_crossings(
                       ring.vertices.front().latitude_rad,
                   };
         const double delta = end.longitude_rad - start.longitude_rad;
-        if (delta == 0.0) {
-            continue;
-        }
+        if (delta == 0.0) continue;
 
         const double low = std::min(start.longitude_rad, end.longitude_rad);
         const double high = std::max(start.longitude_rad, end.longitude_rad);
@@ -118,11 +110,7 @@ void print_seam_crossings(
         for (long long k = first_k; k <= last_k; ++k) {
             const double seam = base_seam + static_cast<double>(k) * two_pi;
             const double parameter = (seam - start.longitude_rad) / delta;
-            // Half-open edge convention (0, 1] prevents a seam vertex shared
-            // by two consecutive edges from being counted twice.
-            if (!(parameter > 0.0 && parameter <= 1.0)) {
-                continue;
-            }
+            if (!(parameter > 0.0 && parameter <= 1.0)) continue;
 
             const auto crossing = aeris::geometry::interpolate_wgs84_linear_edge(
                 start,
@@ -145,12 +133,12 @@ void print_seam_crossings(
     std::cout << "seam_crossing_count=" << crossing_count << '\n';
 }
 
-void probe_primitive(
+void probe_adapter(
     const aeris::geometry::LinearRing& ring,
-    const aeris::projection::EqualAreaPrimitive primitive
+    const aeris::projection::ProjectionAdapter& adapter
 ) {
     aeris::projection::RingProjectionOptions options{};
-    options.primitive = primitive;
+    options.adapter = &adapter;
     options.relative_area_tolerance = 1e-7;
     options.absolute_area_tolerance_m2 = 10'000.0;
     options.initial_geometric_tolerance_m = 500.0;
@@ -159,8 +147,8 @@ void probe_primitive(
     options.subdivision_max_segments_per_edge = 262'144U;
 
     std::cout
-        << "primitive=" << static_cast<int>(primitive)
-        << "\n";
+        << "projection=" << adapter.descriptor().model_id
+        << " name=\"" << adapter.descriptor().display_name << "\"\n";
 
     for (unsigned round_limit = 1U; round_limit <= 18U; ++round_limit) {
         options.max_refinement_rounds = round_limit;
@@ -181,12 +169,8 @@ void probe_primitive(
             << " sample_error=" << static_cast<int>(result.sample_error)
             << '\n';
 
-        if (result.ok()) {
-            break;
-        }
-        if (result.error != aeris::projection::RingProjectionError::area_budget_unmet) {
-            break;
-        }
+        if (result.ok()) break;
+        if (result.error != aeris::projection::RingProjectionError::area_budget_unmet) break;
     }
 }
 
@@ -244,7 +228,8 @@ int main(const int argc, char** const argv) {
             ? aeris::geometry::RingInteriorSide::right
             : aeris::geometry::RingInteriorSide::left;
 
-    probe_primitive(projection_ring, aeris::projection::EqualAreaPrimitive::sinusoidal);
-    probe_primitive(projection_ring, aeris::projection::EqualAreaPrimitive::mollweide);
+    for (const auto* adapter : aeris::projection::builtin_projection_adapters()) {
+        if (adapter != nullptr) probe_adapter(projection_ring, *adapter);
+    }
     return EXIT_SUCCESS;
 }
