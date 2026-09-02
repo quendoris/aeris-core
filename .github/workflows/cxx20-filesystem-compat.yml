@@ -1,0 +1,77 @@
+# SPDX-FileCopyrightText: 2026 quendoris
+# SPDX-License-Identifier: AGPL-3.0-only
+
+name: C++20 Filesystem Compatibility
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'CMakeLists.txt'
+      - 'include/aeris/util/filesystem_utf8.hpp'
+      - 'include/aeris/storage/**'
+      - 'src/source/**'
+      - 'src/storage/**'
+      - 'src/project/**'
+      - 'tests/filesystem_utf8_compat/**'
+      - 'tests/test_storage.cpp'
+      - '.github/workflows/cxx20-filesystem-compat.yml'
+  pull_request:
+    paths:
+      - 'CMakeLists.txt'
+      - 'include/aeris/util/filesystem_utf8.hpp'
+      - 'include/aeris/storage/**'
+      - 'src/source/**'
+      - 'src/storage/**'
+      - 'src/project/**'
+      - 'tests/filesystem_utf8_compat/**'
+      - 'tests/test_storage.cpp'
+      - '.github/workflows/cxx20-filesystem-compat.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  cxx20:
+    name: Ubuntu / C++20 filesystem boundary
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install SQLite development package
+        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
+
+      - name: Configure filesystem UTF-8 probe
+        run: >-
+          cmake -S tests/filesystem_utf8_compat -B build-filesystem-utf8
+          -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build filesystem UTF-8 probe
+        run: cmake --build build-filesystem-utf8 --parallel 2
+
+      - name: Test filesystem UTF-8 probe
+        run: ctest --test-dir build-filesystem-utf8 --output-on-failure
+
+      - name: Configure core, storage and project as C++20
+        run: >-
+          cmake -S . -B build-cxx20
+          -DAERIS_BUILD_STORAGE=ON
+          -DAERIS_BUILD_PROJECT=ON
+          -DAERIS_BUILD_TESTS=ON
+          -DAERIS_BUILD_TOOLS=OFF
+          -DAERIS_WARNINGS_AS_ERRORS=ON
+          -DCMAKE_CXX_STANDARD=20
+          -DCMAKE_CXX_STANDARD_REQUIRED=ON
+          -DCMAKE_CXX_EXTENSIONS=OFF
+          -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build complete native boundary as C++20
+        run: >-
+          cmake --build build-cxx20
+          --target aeris_core aeris_storage aeris_project aeris_test_storage
+          --parallel 2
+
+      - name: Test storage open/create contract under C++20
+        run: ctest --test-dir build-cxx20 --output-on-failure -R '^project_storage$'
