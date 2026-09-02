@@ -40,6 +40,20 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      - name: Enforce one filesystem UTF-8 boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          matches="$({
+            grep -RInF '.u8string()' include src \
+              --include='*.hpp' --include='*.cpp' || true
+          } | grep -v '^include/aeris/util/filesystem_utf8.hpp:' || true)"
+          if [[ -n "$matches" ]]; then
+            echo 'Direct path.u8string() calls must use aeris::util::filesystem_path_utf8():' >&2
+            echo "$matches" >&2
+            exit 1
+          fi
+
       - name: Install SQLite development package
         run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
 
