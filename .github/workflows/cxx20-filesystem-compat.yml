@@ -14,6 +14,7 @@ on:
       - 'src/storage/**'
       - 'src/project/**'
       - 'tests/filesystem_utf8_compat/**'
+      - 'tests/test_storage_unicode_path.cpp'
       - 'tests/test_storage.cpp'
       - '.github/workflows/cxx20-filesystem-compat.yml'
   pull_request:
@@ -25,6 +26,7 @@ on:
       - 'src/storage/**'
       - 'src/project/**'
       - 'tests/filesystem_utf8_compat/**'
+      - 'tests/test_storage_unicode_path.cpp'
       - 'tests/test_storage.cpp'
       - '.github/workflows/cxx20-filesystem-compat.yml'
 
@@ -57,15 +59,15 @@ jobs:
       - name: Install SQLite development package
         run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
 
-      - name: Configure filesystem UTF-8 probe
+      - name: Configure filesystem UTF-8 probes
         run: >-
           cmake -S tests/filesystem_utf8_compat -B build-filesystem-utf8
           -DCMAKE_BUILD_TYPE=Release
 
-      - name: Build filesystem UTF-8 probe
+      - name: Build filesystem UTF-8 probes
         run: cmake --build build-filesystem-utf8 --parallel 2
 
-      - name: Test filesystem UTF-8 probe
+      - name: Test filesystem UTF-8 probes
         run: ctest --test-dir build-filesystem-utf8 --output-on-failure
 
       - name: Configure core, storage and project as C++20
