@@ -77,13 +77,24 @@ void finalize_flat_bounds(SceneGeometry& scene) {
         geo::rotation_z(-radians(request.camera_longitude_deg))
     );
 
-    GlobeCurveOptions options{};
-    options.geometric_tolerance_m = 25'000.0;
-    options.horizon_tolerance_m = 0.25;
-    options.max_subdivision_depth = 24U;
-    options.max_root_iterations = 64U;
-    options.max_segments = 250'000U;
+    GlobeCurveOptions outline_options{};
+    outline_options.geometric_tolerance_m = 25'000.0;
+    outline_options.horizon_tolerance_m = 0.25;
+    outline_options.max_subdivision_depth = 24U;
+    outline_options.max_root_iterations = 64U;
+    outline_options.max_segments = 250'000U;
 
+    // Interactive fill is deliberately finite/coarse rather than verified. It
+    // keeps political/physical composition and label anchors attached to the
+    // moving camera; mouse release still requests the strict verified scene.
+    GlobePolygonOptions fill_options{};
+    fill_options.curve = outline_options;
+    fill_options.curve.geometric_tolerance_m = 50'000.0;
+    fill_options.horizon_arc_tolerance_m = 25'000.0;
+    fill_options.max_horizon_arc_segments = 100'000U;
+    fill_options.max_output_rings = 4096U;
+
+    bool omitted_coarse_fill = false;
     scene.features.reserve(world.features.size());
     for (const auto& feature : world.features) {
         if (should_cancel(canceled)) {
@@ -94,10 +105,36 @@ void finalize_flat_bounds(SceneGeometry& scene) {
         SceneFeatureGeometry output{};
         output.stable_id = feature.stable_id;
         for (const auto& source_ring : feature.rings) {
+            if (should_cancel(canceled)) {
+                scene.canceled = true;
+                return scene;
+            }
+
+            const auto fill = project_visible_wgs84_linear_polygon_ring(
+                source_ring.geometry,
+                world_to_view,
+                fill_options,
+                scene.globe_radius_m
+            );
+            if (fill.ok()) {
+                for (const auto& ring : fill.rings) {
+                    if (ring.size() >= 3U) {
+                        output.fill_rings.push_back(ring);
+                        ++scene.fill_rings;
+                        scene.vertices += ring.size();
+                    }
+                }
+            } else {
+                // Preview is a responsiveness surface, not a verification gate.
+                // Keep the valid outline and let the release-time verified build
+                // remain authoritative instead of blanking the whole drag frame.
+                omitted_coarse_fill = true;
+            }
+
             const auto curve = project_visible_wgs84_linear_ring(
                 source_ring.geometry,
                 world_to_view,
-                options,
+                outline_options,
                 scene.globe_radius_m
             );
             if (!curve.ok()) {
@@ -116,7 +153,9 @@ void finalize_flat_bounds(SceneGeometry& scene) {
         scene.features.push_back(std::move(output));
     }
 
-    scene.diagnostic = "interactive wireframe preview";
+    scene.diagnostic = omitted_coarse_fill
+        ? "interactive filled preview; some coarse fills omitted"
+        : "interactive filled preview";
     return scene;
 }
 
@@ -280,7 +319,12 @@ void finalize_flat_bounds(SceneGeometry& scene) {
                 scene.ok = false;
                 scene.diagnostic = "verified flat projection failed for " + feature.stable_id +
                     " (error " +
-                    std::to_string(static_cast<unsigned>(projected.error)) + ")";
+                    std::to_string(static_cast<unsigned>(projected.error)) +
+                    ", piece " +
+                    std::to_string(static_cast<unsigned>(projected.piece_error)) +
+                    ", seam " +
+                    std::to_string(static_cast<unsigned>(projected.seam_error)) +
+                    ")";
                 return scene;
             }
 

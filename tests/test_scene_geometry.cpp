@@ -68,6 +68,28 @@ bool test_stable_identity_survives_scene_construction() {
     return true;
 }
 
+bool test_globe_preview_keeps_filled_composition() {
+    aeris::source::Result world{};
+    world.features.push_back(make_feature("feature.preview", 0.0));
+    if (world.features.front().rings.empty()) return false;
+
+    aeris::view::SceneRequest request{};
+    request.mode = aeris::view::SurfaceMode::globe;
+    request.quality = aeris::view::SceneQuality::preview;
+    request.camera_longitude_deg = 0.0;
+    request.camera_latitude_deg = 0.0;
+    const auto scene = aeris::view::build_scene_geometry(world, request);
+
+    if (!scene.ok || scene.canceled || scene.features.size() != 1U ||
+        scene.features.front().fill_rings.empty() ||
+        scene.features.front().outlines.empty() ||
+        scene.fill_rings == 0U) {
+        std::cerr << "globe preview lost filled composition: " << scene.diagnostic << '\n';
+        return false;
+    }
+    return true;
+}
+
 bool test_invalid_source_preserves_primary_diagnostic() {
     aeris::source::Result world{};
     world.error = aeris::source::SourceError::normalization_failed;
@@ -106,6 +128,7 @@ bool test_cancellation_never_publishes_partial_success() {
 
 int main() {
     if (!test_stable_identity_survives_scene_construction() ||
+        !test_globe_preview_keeps_filled_composition() ||
         !test_invalid_source_preserves_primary_diagnostic() ||
         !test_cancellation_never_publishes_partial_success()) {
         return EXIT_FAILURE;
