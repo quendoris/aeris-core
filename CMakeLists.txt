@@ -51,6 +51,7 @@ add_library(aeris_core STATIC
     src/geometry/planar.cpp
     src/projection/primitives.cpp
     src/projection/sinu_mollweide.cpp
+    src/projection/sinu_mollweide_ring.cpp
     src/projection/ring.cpp
     src/projection/ring_piecewise.cpp
     src/projection/seam.cpp
