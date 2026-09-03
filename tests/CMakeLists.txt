@@ -105,7 +105,7 @@ if(TARGET aeris_storage)
 
     aeris_add_storage_test(
         aeris_test_layer_stack_atomic
-        layer_stack_atomic.cpp
+        test_layer_stack_atomic.cpp
         project_storage_layer_stack_atomic
     )
     target_link_libraries(aeris_test_layer_stack_atomic PRIVATE AERIS::hash ${AERIS_SQLITE_TARGET})
