@@ -17,6 +17,7 @@ enum class SurfaceMode {
     globe = 0,
     sinusoidal,
     mollweide,
+    sinu_mollweide,
 };
 
 enum class SceneQuality {
@@ -44,6 +45,12 @@ struct SceneGeometry final {
     double camera_longitude_deg = 15.0;
     double camera_latitude_deg = 20.0;
 
+    // Independent of the Globe camera. On the combined Sinu-Mollweide surface
+    // this is the central meridian of the Philbrick projection frame; its
+    // opposite meridian is the one physical cut. Frontends may therefore move
+    // the cut without pretending to pan or rotate the viewer camera.
+    double projection_central_meridian_deg = 0.0;
+
     std::size_t fill_rings = 0U;
     std::size_t outline_parts = 0U;
     std::size_t vertices = 0U;
@@ -59,6 +66,7 @@ struct SceneRequest final {
     SceneQuality quality = SceneQuality::verified;
     double camera_longitude_deg = 15.0;
     double camera_latitude_deg = 20.0;
+    double projection_central_meridian_deg = 0.0;
 };
 
 using CancelCheck = std::function<bool()>;
