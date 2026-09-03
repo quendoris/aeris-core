@@ -45,14 +45,13 @@ void expect_true(const std::string_view name, const bool condition) {
 
 void verify_pick_recovers_cut(
     const std::string_view name,
+    const aeris::view::SurfaceMode mode,
     const double camera_longitude_deg,
     const double camera_latitude_deg,
     const double expected_cut_deg
 ) {
-    using aeris::view::SurfaceMode;
-
     const auto seam = aeris::view::build_projection_seam_geometry(
-        SurfaceMode::sinu_mollweide,
+        mode,
         camera_longitude_deg,
         camera_latitude_deg,
         expected_cut_deg
@@ -72,7 +71,7 @@ void verify_pick_recovers_cut(
     if (sample == nullptr) return;
 
     const auto picked = aeris::view::pick_projection_cut_from_globe(
-        SurfaceMode::sinu_mollweide,
+        mode,
         camera_longitude_deg,
         camera_latitude_deg,
         sample->globe
@@ -101,24 +100,42 @@ void verify_pick_recovers_cut(
 int main() {
     using aeris::view::SurfaceMode;
 
-    verify_pick_recovers_cut(
-        "default-camera Globe pick recovers 37 degree cut",
-        15.0,
-        20.0,
-        37.0
-    );
-    verify_pick_recovers_cut(
-        "rotated-camera Globe pick recovers same 37 degree cut",
-        -48.0,
-        33.0,
-        37.0
-    );
-    verify_pick_recovers_cut(
-        "wrapped negative cut is recovered modulo 360 degrees",
-        102.0,
-        -24.0,
-        -143.5
-    );
+    for (const SurfaceMode mode : {
+             SurfaceMode::sinusoidal,
+             SurfaceMode::mollweide,
+             SurfaceMode::sinu_mollweide,
+         }) {
+        const char* mode_name = aeris::view::surface_mode_name(mode);
+        const std::string default_name =
+            std::string(mode_name) + " default-camera pick recovers 37 degree cut";
+        verify_pick_recovers_cut(
+            default_name,
+            mode,
+            15.0,
+            20.0,
+            37.0
+        );
+
+        const std::string rotated_name =
+            std::string(mode_name) + " rotated-camera pick recovers 37 degree cut";
+        verify_pick_recovers_cut(
+            rotated_name,
+            mode,
+            -48.0,
+            33.0,
+            37.0
+        );
+
+        const std::string wrapped_name =
+            std::string(mode_name) + " wrapped negative cut recovers modulo 360";
+        verify_pick_recovers_cut(
+            wrapped_name,
+            mode,
+            102.0,
+            -24.0,
+            -143.5
+        );
+    }
 
     const double radius = aeris::geo::authalic_radius_m();
     const auto outside = aeris::view::pick_projection_cut_from_globe(
