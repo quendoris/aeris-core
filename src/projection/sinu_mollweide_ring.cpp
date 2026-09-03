@@ -18,7 +18,6 @@ namespace {
 
 constexpr double kTwoPi = 2.0 * geo::kPi;
 constexpr double kMaximumAcceptedLongitudeStep = geo::kPi / 3.0;
-constexpr double kFrameAreaBudgetFraction = 0.25;
 
 struct FrameSample final {
     geometry::GeodeticPoint pseudo_wgs84{};
@@ -400,6 +399,28 @@ void copy_projection_failure(
     result.failed_edge = projected.failed_edge;
 }
 
+[[nodiscard]] bool projection_failure_may_need_more_frame_budget(
+    const PiecewiseRingProjectionResult& projected
+) noexcept {
+    if (projected.error == PiecewiseRingProjectionError::aggregate_area_budget_unmet) {
+        return true;
+    }
+    return projected.error == PiecewiseRingProjectionError::piece_projection_failed &&
+           projected.piece_error == RingProjectionError::area_budget_unmet;
+}
+
+void copy_projection_success(
+    PiecewiseRingProjectionResult& projected,
+    SinuMollweideRingProjectionResult& result
+) noexcept {
+    result.frame_signed_area_m2 = projected.source_signed_area_m2;
+    result.planar_signed_area_m2 = projected.planar_signed_area_m2;
+    result.seam_crossings = projected.seam_crossings;
+    result.projected_vertices = projected.projected_vertices;
+    result.max_projection_refinement_rounds =
+        projected.max_piece_refinement_rounds;
+}
+
 }  // namespace
 
 SinuMollweideRingProjectionResult
@@ -432,16 +453,9 @@ project_philbrick_wgs84_linear_ring_piecewise_verified(
         return result;
     }
 
-    const double frame_budget =
-        result.allowed_area_error_m2 * kFrameAreaBudgetFraction;
-    if (!std::isfinite(frame_budget) || !(frame_budget > 0.0)) {
-        result.error = SinuMollweideRingError::invalid_options;
-        return result;
-    }
-
-    geometry::LinearRing frame_ring{};
     double geometric_tolerance_m = options.initial_geometric_tolerance_m;
-    bool frame_accepted = false;
+    bool frame_ever_fit_total_budget = false;
+    bool projection_was_budget_limited = false;
 
     for (unsigned round = 0U;
          round < options.max_refinement_rounds;
@@ -478,14 +492,54 @@ project_philbrick_wgs84_linear_ring_piecewise_verified(
             return result;
         }
 
-        if (!orientation_changed(
-                result.source_signed_area_m2,
-                result.frame_signed_area_m2
-            ) &&
-            result.frame_absolute_area_error_m2 <= frame_budget) {
-            frame_ring = std::move(framed.ring);
-            frame_accepted = true;
-            break;
+        const bool frame_orientation_ok = !orientation_changed(
+            result.source_signed_area_m2,
+            result.frame_signed_area_m2
+        );
+        if (frame_orientation_ok &&
+            result.frame_absolute_area_error_m2 < result.allowed_area_error_m2) {
+            frame_ever_fit_total_budget = true;
+            const double remaining_budget =
+                result.allowed_area_error_m2 - result.frame_absolute_area_error_m2;
+
+            RingProjectionOptions projection_options = options;
+            projection_options.primitive = EqualAreaPrimitive::sinu_mollweide;
+            projection_options.relative_area_tolerance = 0.0;
+            projection_options.absolute_area_tolerance_m2 = remaining_budget;
+
+            PiecewiseRingProjectionResult projected =
+                project_wgs84_linear_ring_piecewise_verified(
+                    framed.ring,
+                    projection_options
+                );
+            if (projected.ok()) {
+                copy_projection_success(projected, result);
+                result.absolute_area_error_m2 = std::abs(
+                    result.planar_signed_area_m2 - result.source_signed_area_m2
+                );
+                if (std::isfinite(result.absolute_area_error_m2) &&
+                    result.absolute_area_error_m2 <= result.allowed_area_error_m2 &&
+                    !orientation_changed(
+                        result.source_signed_area_m2,
+                        result.planar_signed_area_m2
+                    )) {
+                    result.pieces = std::move(projected.pieces);
+                    return result;
+                }
+
+                // The piecewise projector verified itself against the framed
+                // ring. If the aggregate comparison against the original ring
+                // still misses, a more accurate frame is the only admissible
+                // way to recover; the total user-facing budget is never widened.
+                projection_was_budget_limited = true;
+            } else {
+                copy_projection_failure(projected, result);
+                if (!projection_failure_may_need_more_frame_budget(projected)) {
+                    result.error = SinuMollweideRingError::projection_failed;
+                    return result;
+                }
+                projection_was_budget_limited = true;
+            }
         }
 
         geometric_tolerance_m *= 0.5;
@@ -495,54 +549,14 @@ project_philbrick_wgs84_linear_ring_piecewise_verified(
         }
     }
 
-    if (!frame_accepted) {
+    if (!frame_ever_fit_total_budget) {
         result.error = SinuMollweideRingError::frame_area_budget_unmet;
         return result;
     }
 
-    const double remaining_budget =
-        result.allowed_area_error_m2 - result.frame_absolute_area_error_m2;
-    if (!std::isfinite(remaining_budget) || !(remaining_budget > 0.0)) {
-        result.error = SinuMollweideRingError::aggregate_area_budget_unmet;
-        return result;
-    }
-
-    RingProjectionOptions projection_options = options;
-    projection_options.primitive = EqualAreaPrimitive::sinu_mollweide;
-    projection_options.relative_area_tolerance = 0.0;
-    projection_options.absolute_area_tolerance_m2 = remaining_budget;
-
-    PiecewiseRingProjectionResult projected =
-        project_wgs84_linear_ring_piecewise_verified(
-            frame_ring,
-            projection_options
-        );
-    if (!projected.ok()) {
-        result.error = SinuMollweideRingError::projection_failed;
-        copy_projection_failure(projected, result);
-        return result;
-    }
-
-    result.frame_signed_area_m2 = projected.source_signed_area_m2;
-    result.planar_signed_area_m2 = projected.planar_signed_area_m2;
-    result.seam_crossings = projected.seam_crossings;
-    result.projected_vertices = projected.projected_vertices;
-    result.max_projection_refinement_rounds =
-        projected.max_piece_refinement_rounds;
-    result.absolute_area_error_m2 = std::abs(
-        result.planar_signed_area_m2 - result.source_signed_area_m2
-    );
-    if (!std::isfinite(result.absolute_area_error_m2) ||
-        result.absolute_area_error_m2 > result.allowed_area_error_m2 ||
-        orientation_changed(
-            result.source_signed_area_m2,
-            result.planar_signed_area_m2
-        )) {
-        result.error = SinuMollweideRingError::aggregate_area_budget_unmet;
-        return result;
-    }
-
-    result.pieces = std::move(projected.pieces);
+    result.error = projection_was_budget_limited
+        ? SinuMollweideRingError::aggregate_area_budget_unmet
+        : SinuMollweideRingError::frame_area_budget_unmet;
     return result;
 }
 
