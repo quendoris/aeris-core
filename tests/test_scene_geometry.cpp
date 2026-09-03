@@ -6,6 +6,7 @@
 
 #include "aeris/geo/wgs84.hpp"
 #include "aeris/geometry/geographic.hpp"
+#include "aeris/projection/sinu_mollweide.hpp"
 
 #include <cmath>
 #include <cstdlib>
@@ -51,6 +52,50 @@ namespace {
     return feature;
 }
 
+[[nodiscard]] aeris::geometry::GeodeticPoint world_from_philbrick_frame(
+    const double frame_longitude_deg,
+    const double frame_geodetic_latitude_deg
+) {
+    const auto beta = aeris::geo::authalic_latitude(
+        radians(frame_geodetic_latitude_deg)
+    );
+    if (!beta.ok()) return {};
+
+    const auto planar = aeris::projection::sinu_mollweide_forward(
+        radians(frame_longitude_deg),
+        beta.value
+    );
+    if (!planar.ok()) return {};
+
+    const auto world = aeris::projection::philbrick_sinu_mollweide_inverse_wgs84(
+        planar.value.x,
+        planar.value.y
+    );
+    if (!world.ok()) return {};
+    return {world.value.longitude_rad, world.value.latitude_rad};
+}
+
+[[nodiscard]] aeris::source::Feature make_philbrick_seam_feature() {
+    std::vector<aeris::geometry::GeodeticPoint> points{
+        world_from_philbrick_frame(179.5, -3.0),
+        world_from_philbrick_frame(-179.5, -3.0),
+        world_from_philbrick_frame(-179.5, 3.0),
+        world_from_philbrick_frame(179.5, 3.0),
+    };
+    auto canonical = aeris::geometry::canonicalize_wgs84_linear_ring(points);
+    if (!canonical.ok()) return {};
+    canonical.value.interior_side = aeris::geometry::RingInteriorSide::left;
+
+    aeris::source::Feature feature{};
+    feature.stable_id = "feature.philbrick-seam";
+    feature.source_id = "feature.philbrick-seam.source";
+    aeris::source::FeatureRing ring{};
+    ring.geometry = std::move(canonical.value);
+    ring.role = aeris::source::RingRole::exterior;
+    feature.rings.push_back(std::move(ring));
+    return feature;
+}
+
 bool test_stable_identity_survives_scene_construction() {
     aeris::source::Result world{};
     world.features.push_back(make_feature("feature.alpha", -15.0));
@@ -73,6 +118,49 @@ bool test_stable_identity_survives_scene_construction() {
         scene.features[0].fill_rings.empty() ||
         scene.features[1].fill_rings.empty()) {
         std::cerr << "scene lost canonical feature identity\n";
+        return false;
+    }
+    return true;
+}
+
+bool test_sinu_mollweide_scene_uses_one_surface_with_movable_cut() {
+    aeris::source::Result world{};
+    world.features.push_back(make_philbrick_seam_feature());
+    if (world.features.front().rings.empty()) {
+        std::cerr << "Sinu-Mollweide scene fixture failed to canonicalize\n";
+        return false;
+    }
+
+    aeris::view::SceneRequest request{};
+    request.mode = aeris::view::SurfaceMode::sinu_mollweide;
+    request.quality = aeris::view::SceneQuality::verified;
+    request.projection_central_meridian_deg = 0.0;
+    const auto cut_scene = aeris::view::build_scene_geometry(world, request);
+    if (!cut_scene.ok || cut_scene.canceled || cut_scene.features.size() != 1U ||
+        cut_scene.features.front().stable_id != "feature.philbrick-seam" ||
+        cut_scene.features.front().fill_rings.size() != 2U ||
+        cut_scene.features.front().outlines.size() != 2U ||
+        !near(cut_scene.projection_central_meridian_deg, 0.0)) {
+        std::cerr << "single Sinu-Mollweide cut scene failed: "
+                  << cut_scene.diagnostic << '\n';
+        return false;
+    }
+
+    request.projection_central_meridian_deg = 40.0;
+    const auto moved_scene = aeris::view::build_scene_geometry(world, request);
+    if (!moved_scene.ok || moved_scene.canceled || moved_scene.features.size() != 1U ||
+        moved_scene.features.front().stable_id != "feature.philbrick-seam" ||
+        moved_scene.features.front().fill_rings.size() != 1U ||
+        moved_scene.features.front().outlines.size() != 1U ||
+        !near(moved_scene.projection_central_meridian_deg, 40.0)) {
+        std::cerr << "moved-cut Sinu-Mollweide scene failed: "
+                  << moved_scene.diagnostic << '\n';
+        return false;
+    }
+
+    if (aeris::view::surface_mode_name(aeris::view::SurfaceMode::sinu_mollweide) !=
+        std::string("Sinu-Mollweide")) {
+        std::cerr << "single Sinu-Mollweide surface has no stable public name\n";
         return false;
     }
     return true;
@@ -236,6 +324,7 @@ bool test_cancellation_never_publishes_partial_success() {
 
 int main() {
     if (!test_stable_identity_survives_scene_construction() ||
+        !test_sinu_mollweide_scene_uses_one_surface_with_movable_cut() ||
         !test_globe_preview_keeps_filled_composition() ||
         !test_unfold_contract_keeps_verified_endpoints_separate() ||
         !test_invalid_source_preserves_primary_diagnostic() ||
