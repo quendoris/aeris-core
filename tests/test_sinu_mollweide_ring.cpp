@@ -142,16 +142,26 @@ void test_unsplit_single_surface_ring() {
     }
 }
 
-void test_single_cut_splits_but_does_not_create_a_second_map() {
-    const auto ring = make_world_ring_from_frame(
+[[nodiscard]] aeris::geometry::LinearRing make_local_seam_crossing_ring() {
+    // The source contract is WGS84-linear, not projection-frame-linear. Keep the
+    // two sides only one degree apart across the physical +/-180 frame seam so
+    // the inverse-mapped WGS84 endpoints are local neighbours and their source
+    // linear edges genuinely cross that same oblique cut. A broad +/-170 frame
+    // fixture only constrained its vertices; after inverse mapping, its WGS84
+    // linear edges followed a different curved path through the projection frame.
+    return make_world_ring_from_frame(
         {
-            {170.0, -20.0},
-            {-170.0, -20.0},
-            {-170.0, 20.0},
-            {170.0, 20.0},
+            {179.5, -5.0},
+            {-179.5, -5.0},
+            {-179.5, 5.0},
+            {179.5, 5.0},
         },
         aeris::geometry::RingInteriorSide::left
     );
+}
+
+void test_single_cut_splits_but_does_not_create_a_second_map() {
+    const auto ring = make_local_seam_crossing_ring();
 
     const auto result =
         aeris::projection::project_philbrick_wgs84_linear_ring_piecewise_verified(
@@ -160,21 +170,13 @@ void test_single_cut_splits_but_does_not_create_a_second_map() {
         );
     expect_verified_area("seam-crossing Philbrick ring verifies", result);
     if (result.ok()) {
-        expect_true("single cut exposes crossings", result.seam_crossings >= 2U);
-        expect_true("single source ring becomes multiple planar pieces", result.pieces.size() >= 2U);
+        expect_true("single cut exposes two physical crossings", result.seam_crossings == 2U);
+        expect_true("single source ring becomes two planar pieces", result.pieces.size() == 2U);
     }
 }
 
 void test_moving_cut_changes_piece_topology_not_surface_semantics() {
-    const auto ring = make_world_ring_from_frame(
-        {
-            {170.0, -20.0},
-            {-170.0, -20.0},
-            {-170.0, 20.0},
-            {170.0, 20.0},
-        },
-        aeris::geometry::RingInteriorSide::left
-    );
+    const auto ring = make_local_seam_crossing_ring();
 
     auto moved_options = verified_options();
     moved_options.central_meridian_rad = radians(40.0);
@@ -185,7 +187,7 @@ void test_moving_cut_changes_piece_topology_not_surface_semantics() {
         );
     expect_verified_area("moved-cut Philbrick ring verifies", moved);
     if (moved.ok()) {
-        expect_true("moved cut avoids the fixture", moved.seam_crossings == 0U);
+        expect_true("moved cut avoids the local seam fixture", moved.seam_crossings == 0U);
         expect_true("moved cut keeps one planar piece", moved.pieces.size() == 1U);
     }
 }
