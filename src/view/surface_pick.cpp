@@ -17,6 +17,13 @@ constexpr double kDegreesToRadians = geo::kPi / 180.0;
 constexpr double kRadiansToDegrees = 180.0 / geo::kPi;
 constexpr double kTwoPi = 2.0 * geo::kPi;
 
+[[nodiscard]] geo::Mat3 world_to_projection_frame(const SurfaceMode mode) noexcept {
+    if (mode == SurfaceMode::sinu_mollweide) {
+        return projection::philbrick_world_to_projection_matrix();
+    }
+    return {};
+}
+
 }  // namespace
 
 ProjectionCutPickResult pick_projection_cut_from_globe(
@@ -27,10 +34,9 @@ ProjectionCutPickResult pick_projection_cut_from_globe(
 ) {
     ProjectionCutPickResult result{};
 
-    if (mode != SurfaceMode::sinu_mollweide) {
+    if (mode == SurfaceMode::globe) {
         result.ok = false;
-        result.diagnostic =
-            "direct movable cut picking currently requires Sinu-Mollweide";
+        result.diagnostic = "direct movable cut picking requires a planar target surface";
         return result;
     }
     if (!std::isfinite(camera_longitude_deg) ||
@@ -72,18 +78,17 @@ ProjectionCutPickResult pick_projection_cut_from_globe(
         geo::rotation_y(camera_beta.value),
         geo::rotation_z(-camera_longitude_rad)
     );
-    if (!geo::is_rotation_matrix(world_to_view)) {
+    const geo::Mat3 projection_frame = world_to_projection_frame(mode);
+    if (!geo::is_rotation_matrix(world_to_view) ||
+        !geo::is_rotation_matrix(projection_frame)) {
         result.ok = false;
-        result.diagnostic = "projection cut pick camera frame is not a valid rotation";
+        result.diagnostic = "projection cut pick frame is not a valid rotation";
         return result;
     }
 
     const geo::Vec3 world = geo::apply(geo::transpose(world_to_view), camera);
-    const geo::Vec3 projection_frame = geo::apply(
-        projection::philbrick_world_to_projection_matrix(),
-        world
-    );
-    const geo::LonLatResult framed = geo::unit_vector_to_lonlat(projection_frame);
+    const geo::Vec3 framed_vector = geo::apply(projection_frame, world);
+    const geo::LonLatResult framed = geo::unit_vector_to_lonlat(framed_vector);
     if (!framed.ok()) {
         result.ok = false;
         result.diagnostic = "projection cut pick is indeterminate at a projection-frame pole";
@@ -96,7 +101,9 @@ ProjectionCutPickResult pick_projection_cut_from_globe(
     );
     result.projection_central_meridian_deg =
         central_meridian_rad * kRadiansToDegrees;
-    result.diagnostic = "visible Globe point converted to Philbrick projection cut";
+    result.diagnostic = mode == SurfaceMode::sinu_mollweide
+        ? "visible Globe point converted to Philbrick projection cut"
+        : "visible Globe point converted to projection-frame cut";
     return result;
 }
 
