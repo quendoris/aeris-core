@@ -6,6 +6,7 @@
 #include "aeris/geo/rotation.hpp"
 #include "aeris/geo/wgs84.hpp"
 #include "aeris/projection/ring.hpp"
+#include "aeris/projection/sinu_mollweide_ring.hpp"
 #include "aeris/view/globe_curve.hpp"
 #include "aeris/view/globe_polygon.hpp"
 
@@ -60,6 +61,7 @@ void finalize_flat_bounds(SceneGeometry& scene) {
     scene.quality = SceneQuality::preview;
     scene.camera_longitude_deg = request.camera_longitude_deg;
     scene.camera_latitude_deg = request.camera_latitude_deg;
+    scene.projection_central_meridian_deg = request.projection_central_meridian_deg;
     scene.globe_radius_m = geo::authalic_radius_m();
     scene.min_x = -scene.globe_radius_m;
     scene.min_y = -scene.globe_radius_m;
@@ -169,6 +171,7 @@ void finalize_flat_bounds(SceneGeometry& scene) {
     scene.quality = SceneQuality::verified;
     scene.camera_longitude_deg = request.camera_longitude_deg;
     scene.camera_latitude_deg = request.camera_latitude_deg;
+    scene.projection_central_meridian_deg = request.projection_central_meridian_deg;
     scene.globe_radius_m = geo::authalic_radius_m();
     scene.min_x = -scene.globe_radius_m;
     scene.min_y = -scene.globe_radius_m;
@@ -270,6 +273,29 @@ void finalize_flat_bounds(SceneGeometry& scene) {
     return scene;
 }
 
+[[nodiscard]] projection::RingProjectionOptions flat_projection_options(
+    const SceneRequest& request
+) noexcept {
+    projection::RingProjectionOptions options{};
+    options.primitive = request.mode == SurfaceMode::sinusoidal
+        ? projection::EqualAreaPrimitive::sinusoidal
+        : request.mode == SurfaceMode::sinu_mollweide
+            ? projection::EqualAreaPrimitive::sinu_mollweide
+            : projection::EqualAreaPrimitive::mollweide;
+    options.central_meridian_rad = request.mode == SurfaceMode::sinu_mollweide
+        ? radians(request.projection_central_meridian_deg)
+        : 0.0;
+    options.relative_area_tolerance = 1e-7;
+    options.absolute_area_tolerance_m2 = 10'000.0;
+    options.initial_geometric_tolerance_m = 2'000.0;
+    options.initial_local_area_tolerance_m2 = 1.0e8;
+    options.max_refinement_rounds = 18U;
+    options.subdivision_max_depth = 32U;
+    options.subdivision_max_segments_per_edge = 1'000'000U;
+    options.max_projection_pieces = 4096U;
+    return options;
+}
+
 [[nodiscard]] SceneGeometry build_flat_verified(
     const source::Result& world,
     const SceneRequest& request,
@@ -280,21 +306,10 @@ void finalize_flat_bounds(SceneGeometry& scene) {
     scene.quality = SceneQuality::verified;
     scene.camera_longitude_deg = request.camera_longitude_deg;
     scene.camera_latitude_deg = request.camera_latitude_deg;
+    scene.projection_central_meridian_deg = request.projection_central_meridian_deg;
     initialize_flat_bounds(scene);
 
-    projection::RingProjectionOptions options{};
-    options.primitive = request.mode == SurfaceMode::sinusoidal
-        ? projection::EqualAreaPrimitive::sinusoidal
-        : projection::EqualAreaPrimitive::mollweide;
-    options.central_meridian_rad = 0.0;
-    options.relative_area_tolerance = 1e-7;
-    options.absolute_area_tolerance_m2 = 10'000.0;
-    options.initial_geometric_tolerance_m = 2'000.0;
-    options.initial_local_area_tolerance_m2 = 1.0e8;
-    options.max_refinement_rounds = 18U;
-    options.subdivision_max_depth = 32U;
-    options.subdivision_max_segments_per_edge = 1'000'000U;
-    options.max_projection_pieces = 4096U;
+    const projection::RingProjectionOptions options = flat_projection_options(request);
 
     scene.features.reserve(world.features.size());
     for (const auto& feature : world.features) {
@@ -309,6 +324,46 @@ void finalize_flat_bounds(SceneGeometry& scene) {
             if (should_cancel(canceled)) {
                 scene.canceled = true;
                 return scene;
+            }
+
+            if (request.mode == SurfaceMode::sinu_mollweide) {
+                const auto projected =
+                    projection::project_philbrick_wgs84_linear_ring_piecewise_verified(
+                        source_ring.geometry,
+                        options
+                    );
+                if (!projected.ok()) {
+                    scene.ok = false;
+                    scene.diagnostic = "verified Sinu-Mollweide projection failed for " +
+                        feature.stable_id + " (error " +
+                        std::to_string(static_cast<unsigned>(projected.error)) +
+                        ", projection " +
+                        std::to_string(static_cast<unsigned>(projected.projection_error)) +
+                        ", piece " +
+                        std::to_string(static_cast<unsigned>(projected.piece_error)) +
+                        ", seam " +
+                        std::to_string(static_cast<unsigned>(projected.seam_error)) +
+                        ")";
+                    return scene;
+                }
+
+                scene.max_refinement_rounds = std::max(
+                    scene.max_refinement_rounds,
+                    std::max(
+                        projected.frame_refinement_rounds,
+                        projected.max_projection_refinement_rounds
+                    )
+                );
+                for (const auto& piece : projected.pieces) {
+                    if (piece.size() < 3U) continue;
+                    output.fill_rings.push_back(piece);
+                    output.outlines.push_back(piece);
+                    ++scene.fill_rings;
+                    ++scene.outline_parts;
+                    scene.vertices += piece.size() * 2U;
+                    for (const auto point : piece) include_point(scene, point);
+                }
+                continue;
             }
 
             const auto projected = projection::project_wgs84_linear_ring_piecewise_verified(
@@ -347,9 +402,20 @@ void finalize_flat_bounds(SceneGeometry& scene) {
 
     finalize_flat_bounds(scene);
     if (scene.ok) {
-        scene.diagnostic = request.mode == SurfaceMode::sinusoidal
-            ? "verified WGS84 -> authalic -> Sinusoidal"
-            : "verified WGS84 -> authalic -> Mollweide";
+        switch (request.mode) {
+        case SurfaceMode::sinusoidal:
+            scene.diagnostic = "verified WGS84 -> authalic -> Sinusoidal";
+            break;
+        case SurfaceMode::mollweide:
+            scene.diagnostic = "verified WGS84 -> authalic -> Mollweide";
+            break;
+        case SurfaceMode::sinu_mollweide:
+            scene.diagnostic =
+                "verified WGS84 -> authalic -> oblique Philbrick Sinu-Mollweide";
+            break;
+        case SurfaceMode::globe:
+            break;
+        }
     }
     return scene;
 }
@@ -364,6 +430,8 @@ const char* surface_mode_name(const SurfaceMode mode) noexcept {
         return "Sinusoidal";
     case SurfaceMode::mollweide:
         return "Mollweide";
+    case SurfaceMode::sinu_mollweide:
+        return "Sinu-Mollweide";
     }
     return "Unknown";
 }
@@ -377,6 +445,9 @@ SceneGeometry build_scene_geometry(
         SceneGeometry scene{};
         scene.mode = request.mode;
         scene.quality = request.quality;
+        scene.camera_longitude_deg = request.camera_longitude_deg;
+        scene.camera_latitude_deg = request.camera_latitude_deg;
+        scene.projection_central_meridian_deg = request.projection_central_meridian_deg;
         scene.ok = false;
         scene.diagnostic = world.diagnostic.empty()
             ? "source result is not valid"
