@@ -55,6 +55,7 @@ aeris_add_core_test(aeris_test_globe_polygon test_globe_polygon.cpp globe_polygo
 aeris_add_core_test(aeris_test_globe_polygon_winding test_globe_polygon_winding.cpp globe_polygon_winding)
 aeris_add_core_test(aeris_test_globe_polygon_verified test_globe_polygon_verified.cpp globe_polygon_verified)
 aeris_add_core_test(aeris_test_scene_geometry test_scene_geometry.cpp scene_geometry)
+aeris_add_core_test(aeris_test_surface_geometry test_surface_geometry.cpp surface_geometry)
 
 if(TARGET aeris_storage)
     aeris_add_storage_test(aeris_test_storage test_storage.cpp project_storage)
@@ -104,7 +105,7 @@ if(TARGET aeris_storage)
 
     aeris_add_storage_test(
         aeris_test_layer_stack_atomic
-        test_layer_stack_atomic.cpp
+        layer_stack_atomic.cpp
         project_storage_layer_stack_atomic
     )
     target_link_libraries(aeris_test_layer_stack_atomic PRIVATE AERIS::hash ${AERIS_SQLITE_TARGET})
