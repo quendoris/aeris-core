@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include "aeris/geo/rotation.hpp"
 #include "aeris/projection/primitives.hpp"
 
 namespace aeris::projection {
@@ -21,6 +22,14 @@ inline constexpr double kPhilbrickCenterLongitudeRad =
     20.0 * geo::kPi / 180.0;
 inline constexpr double kPhilbrickCenterGeodeticLatitudeRad =
     55.0 * geo::kPi / 180.0;
+
+// Allen K. Philbrick's default oblique aspect as an orientation-preserving
+// rotation on the authalic sphere. Keeping the frame explicit is important:
+// the planar seam belongs to this rotated frame rather than to an ordinary
+// WGS84 meridian. Frontends may later compose an additional rotation when a
+// user deliberately moves the cut before unfolding, while this function
+// remains the reproducible Wide-Angle default.
+[[nodiscard]] geo::Mat3 philbrick_world_to_projection_matrix() noexcept;
 
 // Allen K. Philbrick's asymmetric raw fusion: Mollweide north of the southern
 // transition parallel, Sinusoidal south of it. Inputs and inverse outputs are
