@@ -2,10 +2,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 #include "aeris/view/scene.hpp"
+#include "aeris/view/unfold.hpp"
 
 #include "aeris/geo/wgs84.hpp"
 #include "aeris/geometry/geographic.hpp"
 
+#include <cmath>
 #include <cstdlib>
 #include <iostream>
 #include <string>
@@ -15,6 +17,14 @@ namespace {
 
 [[nodiscard]] double radians(const double degrees) noexcept {
     return degrees * aeris::geo::kPi / 180.0;
+}
+
+[[nodiscard]] bool near(
+    const double left,
+    const double right,
+    const double tolerance = 1e-9
+) noexcept {
+    return std::abs(left - right) <= tolerance;
 }
 
 [[nodiscard]] aeris::source::Feature make_feature(
@@ -90,6 +100,104 @@ bool test_globe_preview_keeps_filled_composition() {
     return true;
 }
 
+bool test_unfold_contract_keeps_verified_endpoints_separate() {
+    aeris::source::Result world{};
+    world.features.push_back(make_feature("feature.unfold", 0.0));
+    if (world.features.front().rings.empty()) return false;
+
+    for (const auto target : {
+             aeris::view::SurfaceMode::sinusoidal,
+             aeris::view::SurfaceMode::mollweide,
+         }) {
+        const auto bundle = aeris::view::build_unfold_bundle(
+            world,
+            23.0,
+            -11.0,
+            target
+        );
+        if (!bundle.ok || bundle.canceled || bundle.guides.size() != 24U ||
+            bundle.globe_endpoint.mode != aeris::view::SurfaceMode::globe ||
+            bundle.flat_endpoint.mode != target ||
+            bundle.globe_endpoint.quality != aeris::view::SceneQuality::verified ||
+            bundle.flat_endpoint.quality != aeris::view::SceneQuality::verified ||
+            !bundle.globe_endpoint.ok || !bundle.flat_endpoint.ok ||
+            !near(bundle.globe_endpoint.camera_longitude_deg, 23.0) ||
+            !near(bundle.globe_endpoint.camera_latitude_deg, -11.0)) {
+            std::cerr << "unfold endpoint contract failed: " << bundle.diagnostic << '\n';
+            return false;
+        }
+
+        const aeris::view::UnfoldGuideLine* seam_left = nullptr;
+        const aeris::view::UnfoldGuideLine* seam_right = nullptr;
+        for (const auto& guide : bundle.guides) {
+            if (guide.kind != aeris::view::UnfoldGuideKind::seam) continue;
+            if (seam_left == nullptr) seam_left = &guide;
+            else seam_right = &guide;
+        }
+        if (seam_left == nullptr || seam_right == nullptr ||
+            seam_left->vertices.size() != 37U ||
+            seam_right->vertices.size() != 37U) {
+            std::cerr << "unfold seam guides missing\n";
+            return false;
+        }
+
+        constexpr std::size_t equator_index = 18U;
+        const auto& left = seam_left->vertices[equator_index];
+        const auto& right = seam_right->vertices[equator_index];
+        if (!near(left.globe.x, right.globe.x, 1e-6) ||
+            !near(left.globe.y, right.globe.y, 1e-6) ||
+            !(left.flat.x < 0.0 && right.flat.x > 0.0) ||
+            near(left.flat.x, right.flat.x, 1.0)) {
+            std::cerr << "unfold seam does not open from one globe line into two flat edges\n";
+            return false;
+        }
+
+        const auto at_start = aeris::view::interpolate_unfold_vertex(left, 0.0);
+        const auto at_end = aeris::view::interpolate_unfold_vertex(left, 1.0);
+        if (!near(at_start.x, left.globe.x) || !near(at_start.y, left.globe.y) ||
+            !near(at_end.x, left.flat.x) || !near(at_end.y, left.flat.y)) {
+            std::cerr << "unfold interpolation lost exact endpoints\n";
+            return false;
+        }
+    }
+
+    aeris::view::UnfoldGuideVertex behind{};
+    behind.globe_depth_normalized = -0.5;
+    aeris::view::UnfoldGuideVertex front{};
+    front.globe_depth_normalized = 0.25;
+    if (!near(aeris::view::unfold_guide_visibility(behind, 0.0), 0.0) ||
+        !near(aeris::view::unfold_guide_visibility(behind, 1.0), 1.0) ||
+        !near(aeris::view::unfold_guide_visibility(front, 0.0), 1.0) ||
+        !near(aeris::view::unfold_guide_visibility(front, 0.5), 1.0)) {
+        std::cerr << "unfold guide visibility contract failed\n";
+        return false;
+    }
+
+    const auto invalid = aeris::view::build_unfold_bundle(
+        world,
+        0.0,
+        0.0,
+        aeris::view::SurfaceMode::globe
+    );
+    if (invalid.ok || invalid.canceled) {
+        std::cerr << "unfold accepted Globe as a planar target\n";
+        return false;
+    }
+
+    const auto canceled = aeris::view::build_unfold_bundle(
+        world,
+        0.0,
+        0.0,
+        aeris::view::SurfaceMode::sinusoidal,
+        []() { return true; }
+    );
+    if (!canceled.canceled || !canceled.guides.empty()) {
+        std::cerr << "unfold cancellation exposed completed transition geometry\n";
+        return false;
+    }
+    return true;
+}
+
 bool test_invalid_source_preserves_primary_diagnostic() {
     aeris::source::Result world{};
     world.error = aeris::source::SourceError::normalization_failed;
@@ -129,6 +237,7 @@ bool test_cancellation_never_publishes_partial_success() {
 int main() {
     if (!test_stable_identity_survives_scene_construction() ||
         !test_globe_preview_keeps_filled_composition() ||
+        !test_unfold_contract_keeps_verified_endpoints_separate() ||
         !test_invalid_source_preserves_primary_diagnostic() ||
         !test_cancellation_never_publishes_partial_success()) {
         return EXIT_FAILURE;

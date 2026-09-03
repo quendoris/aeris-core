@@ -66,6 +66,7 @@ add_library(aeris_core STATIC
     src/view/globe_polygon.cpp
     src/view/globe_polygon_verified.cpp
     src/view/scene.cpp
+    src/view/unfold.cpp
 )
 add_library(AERIS::core ALIAS aeris_core)
 target_include_directories(aeris_core PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include> $<INSTALL_INTERFACE:include>)
