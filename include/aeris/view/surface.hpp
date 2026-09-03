@@ -52,6 +52,12 @@ struct ProjectionSeamGeometry final {
     std::string diagnostic;
 };
 
+struct ProjectionCutPickResult final {
+    double projection_central_meridian_deg = 0.0;
+    bool ok = true;
+    std::string diagnostic;
+};
+
 // Build the complete authalic-radius domain boundary for a planar equal-area
 // AERIS surface. The central-meridian choice moves which world geometry reaches
 // the two cut edges; it does not change the planar sheet envelope itself.
@@ -69,6 +75,19 @@ struct ProjectionSeamGeometry final {
     double camera_longitude_deg,
     double camera_latitude_deg,
     double projection_central_meridian_deg
+);
+
+// Convert one point picked on the visible authalic Globe disk into the
+// Sinu-Mollweide projection-frame central meridian whose physical cut passes
+// through that point. Screen/view transforms remain frontend policy; the input
+// coordinates use the same meter-valued Globe plane as ProjectionSeamSample.
+// This keeps direct manipulation from reproducing Philbrick rotation math in a
+// UI implementation.
+[[nodiscard]] ProjectionCutPickResult pick_projection_cut_from_globe(
+    SurfaceMode mode,
+    double camera_longitude_deg,
+    double camera_latitude_deg,
+    geometry::PlanarPoint globe_point
 );
 
 }  // namespace aeris::view
