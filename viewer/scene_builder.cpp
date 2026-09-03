@@ -32,6 +32,7 @@ namespace {
 
 [[nodiscard]] SceneData from_core_scene(aeris::view::SceneGeometry core) {
     SceneData scene{};
+    bool legacy_mode_supported = true;
     switch (core.mode) {
     case aeris::view::SurfaceMode::globe:
         scene.mode = ViewMode::globe;
@@ -41,6 +42,12 @@ namespace {
         break;
     case aeris::view::SurfaceMode::mollweide:
         scene.mode = ViewMode::mollweide;
+        break;
+    case aeris::view::SurfaceMode::sinu_mollweide:
+        // The in-core Qt viewer is a legacy diagnostic frontend with a closed
+        // three-mode contract. The product frontend is aeris-desktop. Never
+        // silently relabel the combined surface as one of the old primitives.
+        legacy_mode_supported = false;
         break;
     }
     scene.quality = core.quality == aeris::view::SceneQuality::verified
@@ -68,8 +75,10 @@ namespace {
     scene.vertices = core.vertices;
     scene.max_refinement_rounds = core.max_refinement_rounds;
     scene.canceled = core.canceled;
-    scene.ok = core.ok;
-    scene.diagnostic = std::move(core.diagnostic);
+    scene.ok = core.ok && legacy_mode_supported;
+    scene.diagnostic = legacy_mode_supported
+        ? std::move(core.diagnostic)
+        : "legacy in-core viewer does not expose the combined Sinu-Mollweide surface";
     return scene;
 }
 
