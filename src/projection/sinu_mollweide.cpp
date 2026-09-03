@@ -3,14 +3,22 @@
 
 #include "aeris/projection/sinu_mollweide.hpp"
 
-#include "aeris/geo/rotation.hpp"
-
 #include <cmath>
 
 namespace aeris::projection {
 namespace {
 
-[[nodiscard]] const geo::Mat3& philbrick_world_to_projection() noexcept {
+[[nodiscard]] bool usable_lonlat_result(const geo::LonLatResult& result) noexcept {
+    return result.ok() || result.error == geo::MathError::indeterminate_coordinate;
+}
+
+[[nodiscard]] bool usable_spherical_result(const SphericalResult& result) noexcept {
+    return result.ok() || result.error == geo::MathError::indeterminate_coordinate;
+}
+
+}  // namespace
+
+geo::Mat3 philbrick_world_to_projection_matrix() noexcept {
     static const geo::Mat3 matrix = []() noexcept {
         const auto center_beta = geo::authalic_latitude(
             kPhilbrickCenterGeodeticLatitudeRad
@@ -25,16 +33,6 @@ namespace {
     }();
     return matrix;
 }
-
-[[nodiscard]] bool usable_lonlat_result(const geo::LonLatResult& result) noexcept {
-    return result.ok() || result.error == geo::MathError::indeterminate_coordinate;
-}
-
-[[nodiscard]] bool usable_spherical_result(const SphericalResult& result) noexcept {
-    return result.ok() || result.error == geo::MathError::indeterminate_coordinate;
-}
-
-}  // namespace
 
 PlanarResult sinu_mollweide_forward(
     const double longitude_rad,
@@ -98,7 +96,7 @@ PlanarResult philbrick_sinu_mollweide_forward_wgs84(
     }
 
     const geo::Vec3 world = geo::lonlat_to_unit_vector(longitude_rad, beta.value);
-    const geo::Vec3 rotated = geo::apply(philbrick_world_to_projection(), world);
+    const geo::Vec3 rotated = geo::apply(philbrick_world_to_projection_matrix(), world);
     const geo::LonLatResult framed = geo::unit_vector_to_lonlat(rotated);
     if (!usable_lonlat_result(framed)) {
         return {{}, framed.error};
@@ -126,7 +124,7 @@ SphericalResult philbrick_sinu_mollweide_inverse_wgs84(
         framed.value.latitude_rad
     );
     const geo::Vec3 world = geo::apply(
-        geo::transpose(philbrick_world_to_projection()),
+        geo::transpose(philbrick_world_to_projection_matrix()),
         rotated
     );
     const geo::LonLatResult authalic = geo::unit_vector_to_lonlat(world);
