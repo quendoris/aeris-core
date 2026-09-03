@@ -4,6 +4,7 @@
 #include "aeris/geo/wgs84.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
@@ -195,6 +196,45 @@ void test_authalic_inverse_round_trip() {
     expect_near("inverse south pole preserved", south.value, -aeris::geo::kHalfPi, 0.0);
 }
 
+void test_authalic_inverse_arbitrary_valid_latitudes() {
+    // Projection-frame rotations produce perfectly valid authalic latitudes that
+    // are not themselves the output of one of the coarse geodetic samples above.
+    // Tiny values near the equator are particularly important: the bounded
+    // inverse must return the already-converged midpoint rather than report a
+    // false non-convergence merely because two binary64 bracket endpoints remain.
+    constexpr std::array<double, 10> beta_samples{
+        -0.876673,
+        -0.421326,
+        -1.0e-14,
+        -1.0e-16,
+        1.0e-16,
+        1.0e-14,
+        0.421326,
+        0.715875,
+        0.876673,
+        1.2,
+    };
+
+    for (const double beta : beta_samples) {
+        const auto recovered = aeris::geo::geodetic_latitude_from_authalic(beta);
+        expect_true("arbitrary authalic inverse succeeds", recovered.ok());
+        if (!recovered.ok()) {
+            continue;
+        }
+
+        const auto round_trip = aeris::geo::authalic_latitude(recovered.value);
+        expect_true("arbitrary authalic inverse forward check succeeds", round_trip.ok());
+        if (round_trip.ok()) {
+            expect_near(
+                "arbitrary authalic latitude round-trip",
+                round_trip.value,
+                beta,
+                2e-14
+            );
+        }
+    }
+}
+
 void test_invalid_inputs_fail_closed() {
     const auto nan = aeris::geo::authalic_latitude(std::numeric_limits<double>::quiet_NaN());
     expect_true("NaN rejected", nan.error == aeris::geo::MathError::non_finite_input);
@@ -218,6 +258,7 @@ int main() {
     test_symmetry_and_poles();
     test_monotonicity();
     test_authalic_inverse_round_trip();
+    test_authalic_inverse_arbitrary_valid_latitudes();
     test_invalid_inputs_fail_closed();
 
     if (failures != 0) {
