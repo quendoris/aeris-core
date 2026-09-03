@@ -31,13 +31,16 @@ void expect_true(const std::string_view name, const bool condition) {
 [[nodiscard]] const aeris::view::ProjectionSeamSample* stable_visible_sample(
     const aeris::view::ProjectionSeamGeometry& seam
 ) noexcept {
+    const aeris::view::ProjectionSeamSample* best = nullptr;
     for (std::size_t index = 2U; index + 2U < seam.samples.size(); ++index) {
         const auto& sample = seam.samples[index];
-        if (sample.globe_visible && sample.globe_depth_normalized > 0.2) {
-            return &sample;
+        if (!sample.globe_visible) continue;
+        if (best == nullptr ||
+            sample.globe_depth_normalized > best->globe_depth_normalized) {
+            best = &sample;
         }
     }
-    return nullptr;
+    return best;
 }
 
 void verify_pick_recovers_cut(
@@ -60,6 +63,10 @@ void verify_pick_recovers_cut(
         return;
     }
 
+    // A cut can lie almost entirely on the far hemisphere for some cameras.
+    // Select its deepest visible non-pole sample rather than requiring an
+    // arbitrary minimum depth; this is both discoverable in the UI and the
+    // best-conditioned point for recovering the cut longitude.
     const auto* sample = stable_visible_sample(seam);
     expect_true(name, sample != nullptr);
     if (sample == nullptr) return;
@@ -76,13 +83,17 @@ void verify_pick_recovers_cut(
         return;
     }
 
-    expect_true(
-        name,
-        angular_difference_deg(
-            picked.projection_central_meridian_deg,
-            expected_cut_deg
-        ) <= 1e-7
+    const double difference = angular_difference_deg(
+        picked.projection_central_meridian_deg,
+        expected_cut_deg
     );
+    if (difference > 1e-7) {
+        std::cerr
+            << "  expected cut=" << expected_cut_deg
+            << " picked=" << picked.projection_central_meridian_deg
+            << " difference=" << difference << " deg\n";
+    }
+    expect_true(name, difference <= 1e-7);
 }
 
 }  // namespace
