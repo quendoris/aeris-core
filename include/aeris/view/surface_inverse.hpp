@@ -27,6 +27,6 @@ struct SurfaceGeographicPickResult final {
     geometry::PlanarPoint surface_point,
     double camera_longitude_deg,
     double camera_latitude_deg,
-    double projection_central_meridian_deg) noexcept;
+    double projection_central_meridian_deg);
 
 }  // namespace aeris::view
