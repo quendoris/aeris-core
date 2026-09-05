@@ -105,6 +105,7 @@ if(AERIS_BUILD_STORAGE)
         src/storage/dataset.cpp
         src/storage/feature_property.cpp
         src/storage/resource.cpp
+        src/storage/resource_bytes.cpp
         src/storage/layer.cpp
         src/storage/layer_stack.cpp
         src/storage/style.cpp
