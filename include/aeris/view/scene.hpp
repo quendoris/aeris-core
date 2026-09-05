@@ -45,9 +45,10 @@ struct SceneGeometry final {
     double camera_longitude_deg = 15.0;
     double camera_latitude_deg = 20.0;
 
-    // Independent of the Globe camera. On the combined Sinu-Mollweide surface
-    // this is the central meridian of the Philbrick projection frame; its
-    // opposite meridian is the one physical cut. Frontends may therefore move
+    // Independent of the Globe camera. For planar surfaces this is the central
+    // meridian of the selected projection frame and its opposite meridian is
+    // the one physical cut. Sinusoidal/Mollweide use the world frame;
+    // Sinu-Mollweide uses the Philbrick frame. Frontends may therefore move
     // the cut without pretending to pan or rotate the viewer camera.
     double projection_central_meridian_deg = 0.0;
 
