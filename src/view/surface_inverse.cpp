@@ -72,14 +72,19 @@ namespace {
     }
 
     const double radius = geo::authalic_radius_m();
-    const double x = point.x / radius;
-    const double y = point.y / radius;
-    const double radial2 = x * x + y * y;
+    const double screen_x = point.x / radius;
+    const double screen_y = point.y / radius;
+    const double radial2 = screen_x * screen_x + screen_y * screen_y;
     constexpr double tolerance = 1e-12;
     if (radial2 > 1.0 + tolerance) {
         return failure("surface point lies outside the visible Globe disk");
     }
-    const double z = std::sqrt(std::max(0.0, 1.0 - radial2));
+
+    // orthographic_globe_point() exposes (view.y, view.z) as the planar
+    // coordinate and keeps view.x as signed depth/visibility. Inversion must
+    // reconstruct that exact frame ordering before applying the transpose.
+    const double depth = std::sqrt(std::max(0.0, 1.0 - radial2));
+    const geo::Vec3 viewed{depth, screen_x, screen_y};
 
     const geo::ScalarResult camera_beta =
         geo::authalic_latitude(radians(camera_latitude_deg));
@@ -92,7 +97,7 @@ namespace {
     );
     const geo::Vec3 world = geo::apply(
         geo::transpose(world_to_view),
-        {x, y, z}
+        viewed
     );
     return from_authalic_world_vector(world, camera_longitude_deg);
 }
