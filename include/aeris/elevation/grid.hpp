@@ -69,6 +69,6 @@ struct ElevationTileDecodeResult final {
 [[nodiscard]] std::optional<double> sample_elevation_m(
     const ElevationTile& tile,
     double longitude_deg,
-    double latitude_deg) noexcept;
+    double latitude_deg);
 
 }  // namespace aeris::elevation
