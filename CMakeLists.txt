@@ -72,6 +72,7 @@ add_library(aeris_core STATIC
     src/view/projection_catalog.cpp
     src/view/scene.cpp
     src/view/surface.cpp
+    src/view/surface_inverse.cpp
     src/view/surface_pick.cpp
     src/view/unfold.cpp
 )
