@@ -7,10 +7,13 @@
 #include "aeris/source/natural_earth.hpp"
 
 #include <charconv>
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <system_error>
+#include <utility>
 
 namespace aeris::source {
 namespace {
@@ -31,8 +34,8 @@ namespace {
     const std::size_t first = raw.find_first_not_of(' ');
     if (first == std::string::npos) return std::nullopt;
     const std::size_t last = raw.find_last_not_of(' ');
-    const char* begin = raw.data() + static_cast<std::ptrdiff_t>(first);
-    const char* end = raw.data() + static_cast<std::ptrdiff_t>(last + 1U);
+    const char* begin = raw.data() + first;
+    const char* end = raw.data() + last + 1U;
 
     std::int64_t value = 0;
     const auto parsed = std::from_chars(begin, end, value, 10);
