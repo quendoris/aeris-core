@@ -92,6 +92,30 @@ struct ProjectFreezeResult final {
     const std::filesystem::path& input_path,
     std::string_view modified_utc);
 
+// Embeds generated in-memory content using the same canonical resource
+// transaction/integrity contract as embed_resource_file(). This is the preferred
+// boundary for derived project resources such as elevation tiles: callers never
+// persist or expose a machine-local acquisition/cache path in the .aeris model.
+[[nodiscard]] ResourceMutationResult embed_resource_bytes(
+    ProjectStore& project,
+    const ProjectResourceIdentity& resource,
+    const void* data,
+    std::size_t size,
+    std::string_view modified_utc);
+
+[[nodiscard]] inline ResourceMutationResult embed_resource_bytes(
+    ProjectStore& project,
+    const ProjectResourceIdentity& resource,
+    const std::vector<std::uint8_t>& bytes,
+    const std::string_view modified_utc) {
+    return embed_resource_bytes(
+        project,
+        resource,
+        bytes.empty() ? nullptr : bytes.data(),
+        bytes.size(),
+        modified_utc);
+}
+
 [[nodiscard]] ProjectResourceListResult list_project_resources(
     const ProjectStore& project);
 
