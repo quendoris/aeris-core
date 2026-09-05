@@ -28,7 +28,7 @@ namespace {
     return value - 180.0;
 }
 
-[[nodiscard]] SurfaceGeographicPickResult failure(const char* diagnostic) noexcept {
+[[nodiscard]] SurfaceGeographicPickResult failure(const char* diagnostic) {
     SurfaceGeographicPickResult result{};
     result.diagnostic = diagnostic;
     return result;
@@ -37,7 +37,7 @@ namespace {
 [[nodiscard]] SurfaceGeographicPickResult from_authalic_world_vector(
     const geo::Vec3 world,
     const double fallback_longitude_deg
-) noexcept {
+) {
     const geo::LonLatResult authalic = geo::unit_vector_to_lonlat(world);
     if (!authalic.ok() && authalic.error != geo::MathError::indeterminate_coordinate) {
         return failure("surface inverse could not recover authalic world coordinates");
@@ -64,7 +64,7 @@ namespace {
     const geometry::PlanarPoint point,
     const double camera_longitude_deg,
     const double camera_latitude_deg
-) noexcept {
+) {
     if (!std::isfinite(point.x) || !std::isfinite(point.y) ||
         !std::isfinite(camera_longitude_deg) || !std::isfinite(camera_latitude_deg) ||
         camera_latitude_deg < -90.0 || camera_latitude_deg > 90.0) {
@@ -101,7 +101,7 @@ namespace {
     const SurfaceMode mode,
     const geometry::PlanarPoint point,
     const double central_meridian_deg
-) noexcept {
+) {
     projection::SphericalResult inverse{};
     if (mode == SurfaceMode::sinusoidal) {
         inverse = projection::sinusoidal_inverse(point.x, point.y);
@@ -134,7 +134,7 @@ namespace {
 [[nodiscard]] SurfaceGeographicPickResult inverse_sinu_mollweide(
     const geometry::PlanarPoint point,
     const double central_meridian_deg
-) noexcept {
+) {
     const projection::SphericalResult inverse =
         projection::sinu_mollweide_inverse(point.x, point.y);
     if (!inverse.ok() && inverse.error != geo::MathError::indeterminate_coordinate) {
@@ -174,7 +174,7 @@ SurfaceGeographicPickResult pick_geographic_from_surface(
     const double camera_longitude_deg,
     const double camera_latitude_deg,
     const double projection_central_meridian_deg
-) noexcept {
+) {
     if (!std::isfinite(projection_central_meridian_deg)) {
         return failure("surface inverse received a non-finite projection cut");
     }
