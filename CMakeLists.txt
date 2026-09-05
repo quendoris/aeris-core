@@ -45,6 +45,7 @@ set_target_properties(aeris_hash PROPERTIES CXX_EXTENSIONS OFF POSITION_INDEPEND
 aeris_enable_warnings(aeris_hash)
 
 add_library(aeris_core STATIC
+    src/elevation/grid.cpp
     src/geo/rotation.cpp
     src/geo/wgs84.cpp
     src/geometry/geographic.cpp
