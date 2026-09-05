@@ -46,7 +46,9 @@ int fail(const int code, const std::string& diagnostic) {
     );
     const aeris::geo::Vec3 viewed = aeris::geo::apply(world_to_view, world);
     const double radius = aeris::geo::authalic_radius_m();
-    return {viewed.x * radius, viewed.y * radius};
+    // This is the exact orthographic_globe_point() public convention:
+    // plane=(view.y, view.z), depth=view.x.
+    return {viewed.y * radius, viewed.z * radius};
 }
 
 [[nodiscard]] aeris::projection::PlanarResult philbrick_forward_with_cut(
