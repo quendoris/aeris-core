@@ -282,9 +282,10 @@ void finalize_flat_bounds(SceneGeometry& scene) {
         : request.mode == SurfaceMode::sinu_mollweide
             ? projection::EqualAreaPrimitive::sinu_mollweide
             : projection::EqualAreaPrimitive::mollweide;
-    options.central_meridian_rad = request.mode == SurfaceMode::sinu_mollweide
-        ? radians(request.projection_central_meridian_deg)
-        : 0.0;
+    // The central meridian belongs to the selected planar projection frame for
+    // every equal-area surface. Sinusoidal and Mollweide use the world frame;
+    // Sinu-Mollweide uses the Philbrick frame in its dedicated projector.
+    options.central_meridian_rad = radians(request.projection_central_meridian_deg);
     options.relative_area_tolerance = 1e-7;
     options.absolute_area_tolerance_m2 = 10'000.0;
     options.initial_geometric_tolerance_m = 2'000.0;
