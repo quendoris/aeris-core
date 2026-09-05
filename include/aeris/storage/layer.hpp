@@ -29,6 +29,8 @@ inline constexpr std::string_view kLayerRolePoliticalBoundaryV1 =
     "aeris.layer.political.boundary.v1";
 inline constexpr std::string_view kLayerRoleCountryLabelV1 =
     "aeris.layer.label.country.v1";
+inline constexpr std::string_view kLayerRoleCountryFlagV1 =
+    "aeris.layer.symbol.country-flag.v1";
 
 struct LayerSourceBinding final {
     std::string slot_id;
