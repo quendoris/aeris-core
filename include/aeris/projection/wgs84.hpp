@@ -10,6 +10,7 @@ namespace aeris::projection {
 enum class EqualAreaPrimitive {
     sinusoidal = 0,
     mollweide,
+    sinu_mollweide,
 };
 
 [[nodiscard]] PlanarResult project_wgs84_primitive(

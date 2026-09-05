@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "sqlite_detail.hpp"
 
+#include "aeris/util/filesystem_utf8.hpp"
+
 #include <sstream>
 #include <utility>
 
@@ -30,8 +32,8 @@ std::string sqlite_message(sqlite3* db, const char* context) {
 
 Status open_database(const std::filesystem::path& path, const int flags, DbPtr& out) {
     sqlite3* raw = nullptr;
-    const std::string native = path.u8string();
-    const int rc = sqlite3_open_v2(native.c_str(), &raw, flags, nullptr);
+    const std::string utf8_path = aeris::util::filesystem_path_utf8(path);
+    const int rc = sqlite3_open_v2(utf8_path.c_str(), &raw, flags, nullptr);
     if (rc != SQLITE_OK) {
         const std::string diagnostic = raw != nullptr ? sqlite_message(raw, "sqlite open failed") : "sqlite open failed";
         if (raw != nullptr) {

@@ -1,9 +1,11 @@
 // SPDX-FileCopyrightText: 2026 quendoris
 // SPDX-License-Identifier: AGPL-3.0-only
 
+#include "aeris/projection/sinu_mollweide_ring.hpp"
 #include "aeris/source/acquisition.hpp"
 #include "aeris/source/natural_earth.hpp"
 #include "aeris/util/sha256.hpp"
+#include "aeris/view/scene.hpp"
 
 #include <cstdint>
 #include <cstdlib>
@@ -57,6 +59,21 @@ const aeris::source::FeatureProperty* property(
     return nullptr;
 }
 
+[[nodiscard]] aeris::projection::RingProjectionOptions scene_projection_options() {
+    aeris::projection::RingProjectionOptions options{};
+    options.primitive = aeris::projection::EqualAreaPrimitive::sinu_mollweide;
+    options.central_meridian_rad = 0.0;
+    options.relative_area_tolerance = 1e-7;
+    options.absolute_area_tolerance_m2 = 10'000.0;
+    options.initial_geometric_tolerance_m = 2'000.0;
+    options.initial_local_area_tolerance_m2 = 1.0e8;
+    options.max_refinement_rounds = 18U;
+    options.subdivision_max_depth = 32U;
+    options.subdivision_max_segments_per_edge = 1'000'000U;
+    options.max_projection_pieces = 4096U;
+    return options;
+}
+
 }  // namespace
 
 int main(const int argc, char** argv) {
@@ -106,8 +123,12 @@ int main(const int argc, char** argv) {
 
     std::set<std::string> stable_ids;
     std::set<std::int64_t> ne_ids;
+    std::string antarctica_stable_id;
     std::size_t rings = 0U;
     std::size_t vertices = 0U;
+    const aeris::projection::RingProjectionOptions projection_options =
+        scene_projection_options();
+
     for (const aeris::source::Feature& feature : result.features) {
         if (!stable_ids.insert(feature.stable_id).second || feature.properties.size() != 14U) {
             return fail(8, "feature identity or complete property cardinality is malformed");
@@ -124,18 +145,87 @@ int main(const int argc, char** argv) {
             !std::holds_alternative<std::int64_t>(ne_id->value)) {
             return fail(9, "required typed political properties are absent or have wrong types");
         }
-        if (std::get<std::string>(name->value).empty() ||
-            std::get<std::string>(adm0_a3->value).empty()) {
+        const std::string country_name = std::get<std::string>(name->value);
+        if (country_name.empty() || std::get<std::string>(adm0_a3->value).empty()) {
             return fail(10, "required country name/admin code is empty");
         }
         if (!ne_ids.insert(std::get<std::int64_t>(ne_id->value)).second) {
             return fail(11, "NE_ID is not unique across the adapter result");
         }
+        if (country_name == "Antarctica") {
+            antarctica_stable_id = feature.stable_id;
+        }
 
         rings += feature.rings.size();
-        for (const aeris::source::FeatureRing& ring : feature.rings) {
+        for (std::size_t ring_index = 0U;
+             ring_index < feature.rings.size();
+             ++ring_index) {
+            const aeris::source::FeatureRing& ring = feature.rings[ring_index];
             vertices += ring.geometry.vertices.size();
+
+            const auto projected =
+                aeris::projection::project_philbrick_wgs84_linear_ring_piecewise_verified(
+                    ring.geometry,
+                    projection_options
+                );
+            if (!projected.ok()) {
+                std::cerr
+                    << "Sinu-Mollweide real-ring preflight failed"
+                    << " country=" << country_name
+                    << " stable_id=" << feature.stable_id
+                    << " ring=" << ring_index
+                    << " source_vertices=" << ring.geometry.vertices.size()
+                    << " winding=" << ring.geometry.longitude_winding
+                    << " interior_side=" << static_cast<unsigned>(ring.geometry.interior_side)
+                    << " error=" << static_cast<unsigned>(projected.error)
+                    << " projection_error=" << static_cast<unsigned>(projected.projection_error)
+                    << " piece_error=" << static_cast<unsigned>(projected.piece_error)
+                    << " seam_error=" << static_cast<unsigned>(projected.seam_error)
+                    << " geographic_error=" << static_cast<unsigned>(projected.geographic_error)
+                    << " subdivision_error=" << static_cast<unsigned>(projected.subdivision_error)
+                    << " sample_error=" << static_cast<unsigned>(projected.sample_error)
+                    << " failed_edge=" << projected.failed_edge
+                    << " source_area_m2=" << projected.source_signed_area_m2
+                    << " frame_area_m2=" << projected.frame_signed_area_m2
+                    << " frame_error_m2=" << projected.frame_absolute_area_error_m2
+                    << " allowed_m2=" << projected.allowed_area_error_m2
+                    << " frame_round=" << projected.frame_refinement_rounds
+                    << '\n';
+                return fail(17, "real-ring Sinu-Mollweide preflight rejected a pinned admin0 ring");
+            }
         }
+    }
+    if (antarctica_stable_id.empty()) {
+        return fail(12, "pinned admin0 snapshot did not expose Antarctica by stable identity");
+    }
+
+    aeris::view::SceneRequest scene_request{};
+    scene_request.mode = aeris::view::SurfaceMode::sinu_mollweide;
+    scene_request.quality = aeris::view::SceneQuality::verified;
+    scene_request.projection_central_meridian_deg = 0.0;
+    const aeris::view::SceneGeometry scene =
+        aeris::view::build_scene_geometry(result, scene_request);
+    if (!scene.ok || scene.canceled) {
+        return fail(13, "verified Sinu-Mollweide world scene failed: " + scene.diagnostic);
+    }
+    if (scene.mode != aeris::view::SurfaceMode::sinu_mollweide ||
+        scene.features.size() != result.features.size() ||
+        scene.fill_rings == 0U || scene.outline_parts == 0U || scene.vertices == 0U) {
+        return fail(14, "Sinu-Mollweide scene cardinality or aggregate geometry is malformed");
+    }
+
+    std::size_t antarctica_pieces = 0U;
+    for (const aeris::view::SceneFeatureGeometry& feature : scene.features) {
+        if (stable_ids.find(feature.stable_id) == stable_ids.end() ||
+            feature.fill_rings.empty() || feature.outlines.empty()) {
+            return fail(15, "Sinu-Mollweide scene lost source identity or feature geometry");
+        }
+        if (feature.stable_id == antarctica_stable_id) {
+            antarctica_pieces = feature.fill_rings.size();
+        }
+    }
+    if (antarctica_pieces == 0U) {
+        return fail(16, "Antarctica disappeared from the verified Sinu-Mollweide scene");
     }
 
     std::cout
@@ -143,6 +233,9 @@ int main(const int argc, char** argv) {
         << " features=" << result.features.size()
         << " rings=" << rings
         << " vertices=" << vertices
+        << " sinu_mollweide_fill_rings=" << scene.fill_rings
+        << " sinu_mollweide_vertices=" << scene.vertices
+        << " antarctica_pieces=" << antarctica_pieces
         << " content_sha256=" << verified.snapshot->content_sha256()
         << '\n';
     return EXIT_SUCCESS;

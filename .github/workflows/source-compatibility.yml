@@ -14,6 +14,7 @@ on:
       - tools/real_world_globe_fill_probe.cpp
       - tools/shapefile_projection_probe.cpp
       - tools/natural_earth_admin0_probe.cpp
+      - tools/natural_earth_cartography_probe.cpp
       - CMakeLists.txt
       - include/aeris/source/**
       - src/source/**
@@ -32,6 +33,7 @@ on:
       - tools/real_world_globe_fill_probe.cpp
       - tools/shapefile_projection_probe.cpp
       - tools/natural_earth_admin0_probe.cpp
+      - tools/natural_earth_cartography_probe.cpp
       - CMakeLists.txt
       - include/aeris/source/**
       - src/source/**
@@ -172,14 +174,17 @@ jobs:
           -DAERIS_BUILD_TOOLS=ON
           -DAERIS_WARNINGS_AS_ERRORS=ON
           -DCMAKE_BUILD_TYPE=Release
-      - name: Compile admin0 source proof
-        run: cmake --build build-admin0 --target aeris_natural_earth_admin0_probe --parallel 2
+      - name: Compile admin0 source proofs
+        run: >-
+          cmake --build build-admin0
+          --target aeris_natural_earth_admin0_probe aeris_natural_earth_cartography_probe
+          --parallel 2
 
-      - name: Verify SHP-DBF join and complete typed properties
+      - name: Verify SHP-DBF join, complete typed properties and palette assignments
         shell: bash
         run: |
           set -euo pipefail
           retrieved_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          ./build-admin0/aeris_natural_earth_admin0_probe \
-            "$RUNNER_TEMP/natural-earth-admin0-v5.1.2" \
-            "$retrieved_at"
+          root="$RUNNER_TEMP/natural-earth-admin0-v5.1.2"
+          ./build-admin0/aeris_natural_earth_admin0_probe "$root" "$retrieved_at"
+          ./build-admin0/aeris_natural_earth_cartography_probe "$root" "$retrieved_at"

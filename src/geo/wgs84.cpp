@@ -136,6 +136,14 @@ ScalarResult geodetic_latitude_from_authalic(const double authalic_latitude_rad)
     double lower = -kHalfPi;
     double upper = kHalfPi;
 
+    // q(phi) is monotone on the complete geodetic latitude domain. Therefore every
+    // finite comparison below preserves a valid bracket. Eighty bisections contract
+    // the original pi-radian interval to roughly 2.6e-24 rad, far below the useful
+    // binary64 angular resolution even for authalic latitudes extremely close to
+    // zero. Requiring midpoint == endpoint after that contraction is incorrect:
+    // tiny valid targets can retain two distinct subnormal-scale bracket endpoints
+    // and were previously reported as non-convergent despite an already determined
+    // solution. The final bracket midpoint is the deterministic bounded solution.
     constexpr int max_iterations = 80;
     for (int iteration = 0; iteration < max_iterations; ++iteration) {
         const double candidate = midpoint(lower, upper);
@@ -158,11 +166,10 @@ ScalarResult geodetic_latitude_from_authalic(const double authalic_latitude_rad)
     }
 
     const double candidate = midpoint(lower, upper);
-    if (candidate == lower || candidate == upper) {
-        return {candidate, MathError::none};
+    if (!std::isfinite(candidate)) {
+        return {0.0, MathError::numerical_domain_error};
     }
-
-    return {0.0, MathError::non_convergence};
+    return {candidate, MathError::none};
 }
 
 }  // namespace aeris::geo
