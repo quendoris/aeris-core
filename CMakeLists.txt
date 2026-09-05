@@ -174,6 +174,12 @@ if(AERIS_BUILD_TOOLS)
     set_target_properties(aeris_natural_earth_admin0_probe PROPERTIES CXX_EXTENSIONS OFF)
     aeris_enable_warnings(aeris_natural_earth_admin0_probe)
 
+    add_executable(aeris_natural_earth_cartography_probe tools/natural_earth_cartography_probe.cpp)
+    target_link_libraries(aeris_natural_earth_cartography_probe PRIVATE AERIS::core)
+    target_compile_features(aeris_natural_earth_cartography_probe PRIVATE cxx_std_17)
+    set_target_properties(aeris_natural_earth_cartography_probe PROPERTIES CXX_EXTENSIONS OFF)
+    aeris_enable_warnings(aeris_natural_earth_cartography_probe)
+
     if(TARGET aeris_project)
         add_executable(aeris_project_natural_earth_probe tools/project_natural_earth_probe.cpp)
         target_link_libraries(aeris_project_natural_earth_probe PRIVATE AERIS::project)
