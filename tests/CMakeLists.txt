@@ -103,6 +103,13 @@ if(TARGET aeris_storage)
     target_link_libraries(aeris_test_resource PRIVATE AERIS::hash ${AERIS_SQLITE_TARGET})
 
     aeris_add_storage_test(
+        aeris_test_resource_bytes
+        test_resource_bytes.cpp
+        project_storage_resource_bytes
+    )
+    target_link_libraries(aeris_test_resource_bytes PRIVATE AERIS::hash ${AERIS_SQLITE_TARGET})
+
+    aeris_add_storage_test(
         aeris_test_layer
         test_layer.cpp
         project_storage_layer
