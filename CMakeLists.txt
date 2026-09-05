@@ -61,6 +61,7 @@ add_library(aeris_core STATIC
     src/source/adapter.cpp
     src/source/dbf.cpp
     src/source/natural_earth.cpp
+    src/source/natural_earth_cartography.cpp
     src/source/registry.cpp
     src/source/shapefile.cpp
     src/view/globe.cpp
