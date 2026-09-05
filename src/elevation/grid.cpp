@@ -240,7 +240,7 @@ std::optional<double> sample_elevation_m(
     const ElevationTile& tile,
     const double longitude_deg,
     const double latitude_deg
-) noexcept {
+) {
     if (!std::isfinite(longitude_deg) || !std::isfinite(latitude_deg) ||
         !validate_elevation_tile(tile).empty()) {
         return std::nullopt;
