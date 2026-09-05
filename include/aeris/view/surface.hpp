@@ -32,7 +32,7 @@ struct PlanarSurfaceGeometry final {
 // are two sheet-side representations of the same point on the folded Globe.
 // This is deliberately enough information for both a live seam overlay and a
 // later non-normative unfold interpolation without making a frontend reproduce
-// Philbrick-frame mathematics.
+// projection-frame mathematics.
 struct ProjectionSeamSample final {
     geometry::PlanarPoint globe{};
     geometry::PlanarPoint flat_left{};
@@ -66,10 +66,10 @@ struct ProjectionCutPickResult final {
 );
 
 // Build the physical pole-to-pole projection cut as seen by the current Globe
-// camera together with its two planar boundary locations. For the oblique
-// Sinu-Mollweide surface, projection_central_meridian_deg belongs to the
-// Philbrick frame; moving it rotates the physical cut without changing the
-// planar sheet itself.
+// camera together with its two planar boundary locations. The central meridian
+// belongs to the selected projection frame: ordinary Sinusoidal/Mollweide use
+// the world frame, while oblique Sinu-Mollweide uses the Philbrick frame.
+// Moving it rotates the physical cut without changing the planar sheet itself.
 [[nodiscard]] ProjectionSeamGeometry build_projection_seam_geometry(
     SurfaceMode mode,
     double camera_longitude_deg,
@@ -77,12 +77,12 @@ struct ProjectionCutPickResult final {
     double projection_central_meridian_deg
 );
 
-// Convert one point picked on the visible authalic Globe disk into the
-// Sinu-Mollweide projection-frame central meridian whose physical cut passes
-// through that point. Screen/view transforms remain frontend policy; the input
-// coordinates use the same meter-valued Globe plane as ProjectionSeamSample.
-// This keeps direct manipulation from reproducing Philbrick rotation math in a
-// UI implementation.
+// Convert one point picked on the visible authalic Globe disk into the selected
+// planar surface's projection-frame central meridian whose physical cut passes
+// through that point. Sinusoidal/Mollweide use the world frame and
+// Sinu-Mollweide uses the Philbrick frame. Screen/view transforms remain
+// frontend policy; the input coordinates use the same meter-valued Globe plane
+// as ProjectionSeamSample.
 [[nodiscard]] ProjectionCutPickResult pick_projection_cut_from_globe(
     SurfaceMode mode,
     double camera_longitude_deg,
