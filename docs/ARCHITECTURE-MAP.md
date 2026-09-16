@@ -96,15 +96,7 @@ Projection code consumes canonical WGS84 geometry. It does not repair arbitrary 
 
 The current render-neutral public scene boundary is owned by `aeris/view/*`. It is responsible for producing frontend-independent Globe and planar scene geometry while preserving canonical feature identity and requested projection parameters.
 
-### 2.4 Physical surface semantics
-
-| Contract | Primary responsibility | Implementation surface | Representative verification |
-| --- | --- | --- | --- |
-| `SURFACE-CLASSIFICATION.md` | Separate numerical elevation from water/land/grounded-ice/floating-ice semantics | canonical semantic surface layer + frontend presentation caches | classification fixtures, projection consistency and real-data Antarctic regression (implementation pending) |
-
-The draft surface-classification contract is intentionally independent of the numerical elevation codec. Elevation answers height/depth; semantic classification answers what physical/material class occupies the geographic point; presentation decides how to style the combination.
-
-### 2.5 Unfold and frontend interaction boundary
+### 2.4 Unfold and frontend interaction boundary
 
 | Contract | Primary responsibility | Implementation surface | Representative verification |
 | --- | --- | --- | --- |
@@ -197,7 +189,6 @@ Use this section as a minimum review checklist, not as an exhaustive dependency 
 | seam/polar topology | projection seam contract, polar regressions, real-world conformance, frontend projection acceptance |
 | public scene request/result | core view tests plus every frontend scene controller and stale-generation boundary |
 | elevation codec/resource semantics | elevation grid tests, storage resources, Desktop durable terrain import/reopen/LOD acceptance |
-| surface classification semantics | surface-classification contract, durable source/provenance, Globe/planar consistency, Antarctic real-data regression |
 | command/UI state ownership | `UI-ARCHITECTURE.md`, frontend lifecycle and project-mutation acceptance |
 
 ## 6. Policies
@@ -228,7 +219,9 @@ This belongs at the frontend/application boundary unless a rule becomes part of 
 
 ### 7.2 Surface/material classification
 
-`SURFACE-CLASSIFICATION.md` now defines the draft semantic boundary, but the implementation and executable acceptance are still pending. Until those land, current renderers must not be described as implementing the five-class model.
+Numerical elevation is not sufficient to classify a sample as ocean, ordinary land, grounded ice or floating ice shelf. A separate semantic classification contract is required before terrain styling can make that distinction reproducibly.
+
+Until that contract exists, `elevation >= 0` must not be treated as a universal semantic definition of land in documentation.
 
 ### 7.3 Presentation-resource loading
 
