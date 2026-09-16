@@ -106,12 +106,14 @@ struct PiecewiseRingProjectionResult final {
     }
 };
 
-// Verified high-level ring projection. Zero-winding rings are first partitioned
-// at the active projection seam when necessary; every resulting geographic
-// piece then passes through the existing single-ring verified projector. Polar
-// nonzero-winding rings remain owned by the dedicated polar seam contract.
-// The final signed planar sum is checked again against the original WGS84 ring
-// under one global area budget.
+// Verified high-level ring projection. Ordinary zero-winding rings are
+// partitioned at the active projection seam when necessary. Canonical polar
+// rings first materialize their selected spherical interior as an explicit
+// zero-winding closure through the correct pole; that ordinary geometry is then
+// partitioned by the same movable-seam splitter. Every resulting geographic
+// piece passes through the existing single-ring verified projector, and the
+// final signed planar sum is checked again against the original WGS84 ring under
+// one global area budget.
 [[nodiscard]] PiecewiseRingProjectionResult project_wgs84_linear_ring_piecewise_verified(
     const geometry::LinearRing& ring,
     const RingProjectionOptions& options = {}

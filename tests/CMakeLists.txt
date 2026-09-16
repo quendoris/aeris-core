@@ -31,11 +31,16 @@ endfunction()
 aeris_add_core_test(aeris_test_authalic test_authalic.cpp authalic_math)
 aeris_add_core_test(aeris_test_rotation test_rotation.cpp spherical_rotation)
 aeris_add_core_test(aeris_test_projection_primitives test_projection_primitives.cpp projection_primitives)
+aeris_add_core_test(aeris_test_sinu_mollweide test_sinu_mollweide.cpp sinu_mollweide_projection)
+aeris_add_core_test(aeris_test_sinu_mollweide_ring test_sinu_mollweide_ring.cpp sinu_mollweide_ring)
 aeris_add_core_test(aeris_test_planar_geometry test_planar_geometry.cpp planar_geometry)
 aeris_add_core_test(aeris_test_geographic_area test_geographic_area.cpp geographic_area)
+aeris_add_core_test(aeris_test_elevation_grid test_elevation_grid.cpp elevation_grid)
 aeris_add_core_test(aeris_test_subdivision test_subdivision.cpp adaptive_subdivision)
 aeris_add_core_test(aeris_test_polygon_area_invariant test_polygon_area_invariant.cpp polygon_area_invariant)
 aeris_add_core_test(aeris_test_ring_projection_budget test_ring_projection_budget.cpp ring_projection_budget)
+aeris_add_core_test(aeris_test_polar_seam_roundoff test_polar_seam_roundoff.cpp polar_seam_roundoff)
+aeris_add_core_test(aeris_test_polar_movable_seam test_polar_movable_seam.cpp polar_movable_seam)
 aeris_add_core_test(aeris_test_seam_split test_seam_split.cpp projection_seam_split)
 aeris_add_core_test(aeris_test_piecewise_polygon_semantics test_piecewise_polygon_semantics.cpp piecewise_polygon_semantics)
 aeris_add_core_test(aeris_test_piecewise_options test_piecewise_options.cpp piecewise_options)
@@ -51,6 +56,12 @@ aeris_add_core_test(aeris_test_globe_curve test_globe_curve.cpp globe_curve)
 aeris_add_core_test(aeris_test_globe_polygon test_globe_polygon.cpp globe_polygon)
 aeris_add_core_test(aeris_test_globe_polygon_winding test_globe_polygon_winding.cpp globe_polygon_winding)
 aeris_add_core_test(aeris_test_globe_polygon_verified test_globe_polygon_verified.cpp globe_polygon_verified)
+aeris_add_core_test(aeris_test_scene_geometry test_scene_geometry.cpp scene_geometry)
+aeris_add_core_test(aeris_test_surface_geometry test_surface_geometry.cpp surface_geometry)
+aeris_add_core_test(aeris_test_surface_inverse test_surface_inverse.cpp surface_inverse)
+aeris_add_core_test(aeris_test_surface_pick test_surface_pick.cpp surface_pick)
+aeris_add_core_test(aeris_test_projection_catalog test_projection_catalog.cpp projection_catalog)
+aeris_add_core_test(aeris_test_standard_projection_cut_scene test_standard_projection_cut_scene.cpp standard_projection_cut_scene)
 
 if(TARGET aeris_storage)
     aeris_add_storage_test(aeris_test_storage test_storage.cpp project_storage)
@@ -90,6 +101,13 @@ if(TARGET aeris_storage)
         project_storage_resource
     )
     target_link_libraries(aeris_test_resource PRIVATE AERIS::hash ${AERIS_SQLITE_TARGET})
+
+    aeris_add_storage_test(
+        aeris_test_resource_bytes
+        test_resource_bytes.cpp
+        project_storage_resource_bytes
+    )
+    target_link_libraries(aeris_test_resource_bytes PRIVATE AERIS::hash ${AERIS_SQLITE_TARGET})
 
     aeris_add_storage_test(
         aeris_test_layer

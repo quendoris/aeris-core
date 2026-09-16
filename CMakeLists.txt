@@ -45,11 +45,14 @@ set_target_properties(aeris_hash PROPERTIES CXX_EXTENSIONS OFF POSITION_INDEPEND
 aeris_enable_warnings(aeris_hash)
 
 add_library(aeris_core STATIC
+    src/elevation/grid.cpp
     src/geo/rotation.cpp
     src/geo/wgs84.cpp
     src/geometry/geographic.cpp
     src/geometry/planar.cpp
     src/projection/primitives.cpp
+    src/projection/sinu_mollweide.cpp
+    src/projection/sinu_mollweide_ring.cpp
     src/projection/ring.cpp
     src/projection/ring_piecewise.cpp
     src/projection/seam.cpp
@@ -59,12 +62,19 @@ add_library(aeris_core STATIC
     src/source/adapter.cpp
     src/source/dbf.cpp
     src/source/natural_earth.cpp
+    src/source/natural_earth_cartography.cpp
     src/source/registry.cpp
     src/source/shapefile.cpp
     src/view/globe.cpp
     src/view/globe_curve.cpp
     src/view/globe_polygon.cpp
     src/view/globe_polygon_verified.cpp
+    src/view/projection_catalog.cpp
+    src/view/scene.cpp
+    src/view/surface.cpp
+    src/view/surface_inverse.cpp
+    src/view/surface_pick.cpp
+    src/view/unfold.cpp
 )
 add_library(AERIS::core ALIAS aeris_core)
 target_include_directories(aeris_core PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include> $<INSTALL_INTERFACE:include>)
@@ -95,6 +105,7 @@ if(AERIS_BUILD_STORAGE)
         src/storage/dataset.cpp
         src/storage/feature_property.cpp
         src/storage/resource.cpp
+        src/storage/resource_bytes.cpp
         src/storage/layer.cpp
         src/storage/layer_stack.cpp
         src/storage/style.cpp
@@ -165,6 +176,12 @@ if(AERIS_BUILD_TOOLS)
     target_compile_features(aeris_natural_earth_admin0_probe PRIVATE cxx_std_17)
     set_target_properties(aeris_natural_earth_admin0_probe PROPERTIES CXX_EXTENSIONS OFF)
     aeris_enable_warnings(aeris_natural_earth_admin0_probe)
+
+    add_executable(aeris_natural_earth_cartography_probe tools/natural_earth_cartography_probe.cpp)
+    target_link_libraries(aeris_natural_earth_cartography_probe PRIVATE AERIS::core)
+    target_compile_features(aeris_natural_earth_cartography_probe PRIVATE cxx_std_17)
+    set_target_properties(aeris_natural_earth_cartography_probe PROPERTIES CXX_EXTENSIONS OFF)
+    aeris_enable_warnings(aeris_natural_earth_cartography_probe)
 
     if(TARGET aeris_project)
         add_executable(aeris_project_natural_earth_probe tools/project_natural_earth_probe.cpp)

@@ -213,6 +213,41 @@ void test_four_crossings_produce_three_components() {
     expect_piece_domain("concave split pieces lie in active domain", split, 0.0);
 }
 
+void test_seam_coincident_edge_has_single_interior_owner() {
+    // In the unwrapped plane this is a simple L-shaped polygon:
+    //
+    // 170 ------------------- 190
+    //  |                       |
+    //  |              180 ----190
+    //  |              |
+    // 170 ----------- 180
+    //
+    // The middle vertical edge lies exactly on +180. Its northward traversal
+    // has left-side interior to the west, so the western strip owns that edge;
+    // the eastern strip closes its own component against the same cut instead
+    // of duplicating or rejecting the boundary.
+    const auto ring = make_ring(
+        {
+            {radians(170.0), radians(-20.0)},
+            {radians(180.0), radians(-20.0)},
+            {radians(180.0), radians(0.0)},
+            {radians(-170.0), radians(0.0)},
+            {radians(-170.0), radians(20.0)},
+            {radians(170.0), radians(20.0)},
+        },
+        aeris::geometry::RingInteriorSide::left
+    );
+
+    const auto split = aeris::projection::split_wgs84_linear_ring_at_projection_seam(ring);
+    expect_area_partition("seam-coincident boundary preserves area", split);
+    if (!split.ok()) {
+        return;
+    }
+
+    expect_true("seam-coincident L shape becomes two pieces", split.pieces.size() == 2U);
+    expect_piece_domain("seam-coincident pieces stay in active domain", split, 0.0);
+}
+
 void test_split_requires_explicit_interior_side() {
     const auto ring = make_ring({
         {radians(170.0), radians(-20.0)},
@@ -255,6 +290,7 @@ int main() {
     test_two_crossing_antimeridian_rectangle();
     test_reversed_two_crossing_rectangle();
     test_four_crossings_produce_three_components();
+    test_seam_coincident_edge_has_single_interior_owner();
     test_split_requires_explicit_interior_side();
     test_nonzero_winding_is_not_stolen_from_polar_contract();
 

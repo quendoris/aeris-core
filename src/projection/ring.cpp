@@ -146,17 +146,38 @@ struct SeamIntersection final {
         const long long last_k = static_cast<long long>(last_k_double);
         for (long long k = first_k; k <= last_k; ++k) {
             const double seam = base_seam + static_cast<double>(k) * kTwoPi;
-            const double parameter = (seam - start.longitude_rad) / delta;
+            const bool start_on_seam =
+                std::abs(start.longitude_rad - seam) <= kSeamTolerance;
+            const bool end_on_seam =
+                std::abs(end.longitude_rad - seam) <= kSeamTolerance;
 
-            // Half-open ownership (0, 1] means an exact seam vertex belongs to
-            // its incoming edge only. This prevents double-counting the same
-            // topological crossing on adjacent edges.
-            if (parameter <= parameter_tolerance ||
-                parameter > 1.0 + parameter_tolerance) {
+            // An edge that lies on the seam is part of the source topology, not
+            // a crossing. Natural Earth polar rings can contain an explicit
+            // seam-to-pole closure with binary64-longitude noise on one endpoint.
+            if (start_on_seam && end_on_seam) {
                 continue;
             }
 
-            const double owned_parameter = std::min(1.0, parameter);
+            double owned_parameter = 0.0;
+            if (end_on_seam) {
+                // Half-open ownership (0, 1] gives a seam vertex to its incoming
+                // edge. Prefer the angular seam tolerance here: converting a tiny
+                // longitude endpoint error to a parameter can amplify it on a
+                // short edge and incorrectly move an intended endpoint beyond 1.
+                owned_parameter = 1.0;
+            } else {
+                if (start_on_seam) {
+                    continue;
+                }
+
+                const double parameter = (seam - start.longitude_rad) / delta;
+                if (parameter <= parameter_tolerance ||
+                    parameter > 1.0 + parameter_tolerance) {
+                    continue;
+                }
+                owned_parameter = std::min(1.0, parameter);
+            }
+
             const geometry::GeodeticPoint point =
                 geometry::interpolate_wgs84_linear_edge(
                     start,

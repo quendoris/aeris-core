@@ -187,6 +187,38 @@ struct StripClipResult final {
            nearly_equal(start.longitude_rad, right);
 }
 
+[[nodiscard]] bool coincident_edge_belongs_to_strip(
+    const geometry::GeodeticPoint start,
+    const geometry::GeodeticPoint end,
+    const double left,
+    const double right,
+    const geometry::RingInteriorSide interior_side
+) noexcept {
+    if (!edge_coincident_with_boundary(start, end, left, right) ||
+        interior_side == geometry::RingInteriorSide::unspecified ||
+        nearly_equal(start.latitude_rad, end.latitude_rad)) {
+        return false;
+    }
+
+    const bool on_left_boundary = nearly_equal(start.longitude_rad, left);
+    const bool on_right_boundary = nearly_equal(start.longitude_rad, right);
+    if (on_left_boundary == on_right_boundary) {
+        return false;
+    }
+
+    // For a north-going meridian edge, the geometric left side is west and
+    // the right side is east. South-going reverses that relationship. A strip
+    // owns the coincident edge iff its interior half-plane is the polygon's
+    // declared interior half-plane. This assigns a seam boundary to exactly
+    // one adjacent strip without perturbing the requested cut.
+    const bool northward = end.latitude_rad > start.latitude_rad;
+    const bool polygon_interior_is_west = northward
+        ? interior_side == geometry::RingInteriorSide::left
+        : interior_side == geometry::RingInteriorSide::right;
+    const bool strip_interior_is_west = on_right_boundary;
+    return polygon_interior_is_west == strip_interior_is_west;
+}
+
 [[nodiscard]] bool clip_edge_to_strip(
     const geometry::GeodeticPoint start,
     const geometry::GeodeticPoint end,
@@ -404,8 +436,26 @@ void merge_cyclic_chains(std::vector<Chain>& chains) {
         const geometry::GeodeticPoint end = ring_edge_end(ring, edge_index);
 
         if (edge_coincident_with_boundary(start, end, left, right)) {
-            result.error = SeamSplitError::seam_coincident_edge;
-            return result;
+            if (coincident_edge_belongs_to_strip(
+                    start,
+                    end,
+                    left,
+                    right,
+                    ring.interior_side
+                )) {
+                geometry::GeodeticPoint owned_start = start;
+                geometry::GeodeticPoint owned_end = end;
+                owned_start.longitude_rad = snap_longitude_to_strip(
+                    owned_start.longitude_rad,
+                    left,
+                    right
+                );
+                owned_end.longitude_rad = owned_start.longitude_rad;
+                if (!same_point(owned_start, owned_end)) {
+                    append_segment(chains, owned_start, owned_end);
+                }
+            }
+            continue;
         }
 
         geometry::GeodeticPoint clipped_start{};
@@ -787,9 +837,9 @@ SeamSplitResult split_wgs84_linear_ring_at_projection_seam(
         return result;
     }
 
-    // Every physical crossing is incident to the two longitude strips that
-    // meet at the cut. Count those two directed incidences first; only after
-    // validating parity convert them to the public physical-crossing count.
+    // Every ordinary physical crossing is incident to the two longitude strips
+    // that meet at the cut. Boundary-coincident ownership is resolved above and
+    // intentionally contributes no synthetic crossing incidence.
     if ((crossing_incidences % 2U) != 0U) {
         result.error = SeamSplitError::ambiguous_seam_touch;
         return result;

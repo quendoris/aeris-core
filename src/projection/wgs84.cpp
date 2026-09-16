@@ -3,6 +3,8 @@
 
 #include "aeris/projection/wgs84.hpp"
 
+#include "aeris/projection/sinu_mollweide.hpp"
+
 #include <cmath>
 
 namespace aeris::projection {
@@ -30,6 +32,8 @@ PlanarResult project_wgs84_primitive(
             return sinusoidal_forward(longitude_delta, beta.value, radius_m);
         case EqualAreaPrimitive::mollweide:
             return mollweide_forward(longitude_delta, beta.value, radius_m);
+        case EqualAreaPrimitive::sinu_mollweide:
+            return sinu_mollweide_forward(longitude_delta, beta.value, radius_m);
     }
 
     return {{}, geo::MathError::numerical_domain_error};

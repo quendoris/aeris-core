@@ -50,7 +50,7 @@ namespace {
                 scene.mode == aeris::viewer::ViewMode::globe &&
                 near(scene.camera_longitude_deg, 45.0) &&
                 near(scene.camera_latitude_deg, 10.0) &&
-                scene.fill_rings == 0U &&
+                scene.fill_rings > 0U &&
                 scene.outline_parts > 0U) {
                 preview_seen = true;
             } else {

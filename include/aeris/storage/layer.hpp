@@ -19,6 +19,8 @@ inline constexpr std::size_t kMaxLayerBindings = 256U;
 // are suitable for ProjectLayerRecord::role_id and remain independent of Qt or
 // any particular frontend. Pre-1.0 additions may still evolve, but one role ID
 // always denotes one meaning within a given draft generation.
+inline constexpr std::string_view kLayerRolePhysicalElevationV1 =
+    "aeris.layer.physical.elevation.v1";
 inline constexpr std::string_view kLayerRolePhysicalLandFillV1 =
     "aeris.layer.physical.land-fill.v1";
 inline constexpr std::string_view kLayerRolePhysicalCoastlineV1 =
@@ -29,6 +31,8 @@ inline constexpr std::string_view kLayerRolePoliticalBoundaryV1 =
     "aeris.layer.political.boundary.v1";
 inline constexpr std::string_view kLayerRoleCountryLabelV1 =
     "aeris.layer.label.country.v1";
+inline constexpr std::string_view kLayerRoleCountryFlagV1 =
+    "aeris.layer.symbol.country-flag.v1";
 
 struct LayerSourceBinding final {
     std::string slot_id;
