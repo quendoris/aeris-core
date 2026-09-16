@@ -1,0 +1,64 @@
+# SPDX-FileCopyrightText: 2026 quendoris
+# SPDX-License-Identifier: AGPL-3.0-only
+
+name: Surface Classification
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/surface-classification.yml
+      - include/aeris/source/**
+      - src/source/**
+      - include/aeris/geometry/**
+      - src/geometry/**
+      - tools/surface_*.cpp
+      - tests/test_surface_*.cpp
+      - CMakeLists.txt
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/surface-classification.yml
+      - include/aeris/source/**
+      - src/source/**
+      - include/aeris/geometry/**
+      - src/geometry/**
+      - tools/surface_*.cpp
+      - tests/test_surface_*.cpp
+      - CMakeLists.txt
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  natural-earth-antarctic-ice-shelves:
+    name: Natural Earth pinned Antarctic ice shelves
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Fetch exact pinned source bytes
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/natural-earth-ice-shelves"
+          mkdir -p "$root"
+          base="https://raw.githubusercontent.com/nvkelso/natural-earth-vector/f1890d9f152c896d250a77557a5751a93d494776/50m_physical"
+          for file in \
+            ne_50m_antarctic_ice_shelves_polys.shp \
+            ne_50m_antarctic_ice_shelves_polys.prj \
+            ne_50m_antarctic_ice_shelves_polys.VERSION.txt; do
+            curl --proto '=https' --tlsv1.2 --fail --location --retry 3 \
+              --output "$root/$file" "$base/$file"
+          done
+
+      - name: Record exact source identities
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/natural-earth-ice-shelves"
+          wc -c "$root"/*
+          sha256sum "$root"/*
+          test "$(cat "$root/ne_50m_antarctic_ice_shelves_polys.VERSION.txt")" = "4.1.0"
