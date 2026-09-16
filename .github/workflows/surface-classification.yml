@@ -85,11 +85,11 @@ jobs:
           -DAERIS_WARNINGS_AS_ERRORS=ON
           -DCMAKE_BUILD_TYPE=Release
 
-      - name: Build semantic adapter and real-source geometry probe
+      - name: Build semantic adapter and real-source proofs
         shell: bash
         run: >-
           cmake --build build-surface
-          --target aeris_test_natural_earth aeris_shapefile_projection_probe
+          --target aeris_test_natural_earth aeris_surface_ice_shelf_probe aeris_shapefile_projection_probe
           --parallel 2
 
       - name: Prove canonical classification vocabulary and adapter contract
@@ -98,6 +98,14 @@ jobs:
           ctest --test-dir build-surface
           --output-on-failure
           -R '^natural_earth_adapter$'
+
+      - name: Prove exact pinned source through semantic adapter
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/natural-earth-ice-shelves"
+          retrieved_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          ./build-surface/aeris_surface_ice_shelf_probe "$root" "$retrieved_at"
 
       - name: Prove pinned ice-shelf geometry canonicalizes and projects
         shell: bash
