@@ -21,6 +21,8 @@ inline constexpr std::string_view kBuiltinPoliticalBordersLayerId =
     "builtin.political.borders";
 inline constexpr std::string_view kBuiltinPoliticalLabelsLayerId =
     "builtin.political.labels";
+inline constexpr std::string_view kBuiltinSurfaceClassificationLayerId =
+    "builtin.physical.surface-classification";
 
 struct BuiltinWorldLayerSources final {
     std::string physical_source_id;
@@ -63,6 +65,20 @@ struct WorldLayerStackResult final {
 [[nodiscard]] WorldLayerStackResult initialize_builtin_world_layer_stack(
     storage::ProjectStore& project,
     const BuiltinWorldLayerSources& sources,
+    std::string_view modified_utc);
+
+// Attach a durable semantic surface-classification source without changing the
+// historical five-layer bootstrap contract above. This is intentionally an
+// append/ensure operation so existing .aeris projects can adopt classification
+// without rebuilding or overwriting their user-modified layer stack.
+//
+// The source must advertise `surface_classification`, contain canonical geometry,
+// and expose a complete per-feature `aeris.surface_class.v1` property channel.
+// Exact structural retry is a no-op. Existing user state such as visibility/name
+// is preserved; only conflicting immutable role/source wiring is rejected.
+[[nodiscard]] WorldLayerStackResult ensure_builtin_surface_classification_layer(
+    storage::ProjectStore& project,
+    std::string_view surface_source_id,
     std::string_view modified_utc);
 
 }  // namespace aeris::project
