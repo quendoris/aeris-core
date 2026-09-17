@@ -7,6 +7,7 @@ on:
   pull_request:
     paths:
       - .github/workflows/surface-classification.yml
+      - scripts/fetch_demo_world.cmake
       - include/aeris/source/**
       - include/aeris/surface/**
       - src/source/**
@@ -25,6 +26,7 @@ on:
     branches: [main]
     paths:
       - .github/workflows/surface-classification.yml
+      - scripts/fetch_demo_world.cmake
       - include/aeris/source/**
       - include/aeris/surface/**
       - src/source/**
@@ -60,22 +62,14 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends libsqlite3-dev
 
-      - name: Fetch exact pinned source bytes
+      - name: Fetch pinned demo-world pack through production fetcher
         shell: bash
-        run: |
-          set -euo pipefail
-          root="$RUNNER_TEMP/natural-earth-ice-shelves"
-          mkdir -p "$root"
-          base="https://raw.githubusercontent.com/nvkelso/natural-earth-vector/f1890d9f152c896d250a77557a5751a93d494776/50m_physical"
-          for file in \
-            ne_50m_antarctic_ice_shelves_polys.shp \
-            ne_50m_antarctic_ice_shelves_polys.prj \
-            ne_50m_antarctic_ice_shelves_polys.VERSION.txt; do
-            curl --proto '=https' --tlsv1.2 --fail --location --retry 3 \
-              --output "$root/$file" "$base/$file"
-          done
+        run: >-
+          cmake
+          -DDESTINATION=${{ runner.temp }}/natural-earth-ice-shelves
+          -P scripts/fetch_demo_world.cmake
 
-      - name: Verify exact source identities
+      - name: Verify exact semantic source identities in demo-world pack
         shell: bash
         run: |
           set -euo pipefail
