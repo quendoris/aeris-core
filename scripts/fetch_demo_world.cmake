@@ -10,6 +10,7 @@ find_program(AERIS_CURL_EXECUTABLE NAMES curl)
 
 set(_commit "f1890d9f152c896d250a77557a5751a93d494776")
 set(_physical_base "https://raw.githubusercontent.com/nvkelso/natural-earth-vector/${_commit}/110m_physical")
+set(_surface_base "https://raw.githubusercontent.com/nvkelso/natural-earth-vector/${_commit}/50m_physical")
 set(_cultural_base "https://raw.githubusercontent.com/nvkelso/natural-earth-vector/${_commit}/110m_cultural")
 
 function(aeris_download_with_retry base name)
@@ -98,21 +99,30 @@ aeris_download_verified(
     "ne_110m_admin_0_countries.dbf"
     "1fee677cd4e03b367876e03861eb10197e4022a846bf92060e0313432863785b"
 )
+aeris_download_verified(
+    "${_surface_base}"
+    "ne_50m_antarctic_ice_shelves_polys.shp"
+    "05d06b075deb3e4119f0510788b03af7100f2c25b060d5cfdd126fb6817004db"
+)
 
 # Tiny immutable companions are materialized byte-for-byte from the pinned
 # upstream commit contents and then verified by SHA-256.
 set(_wgs84_prj [=[GEOGCS["GCS_WGS_1984",DATUM["D_WGS_1984",SPHEROID["WGS_1984",6378137.0,298.257223563]],PRIMEM["Greenwich",0.0],UNIT["Degree",0.017453292519943295]]]=])
 file(WRITE "${DESTINATION}/ne_110m_land.prj" "${_wgs84_prj}")
 file(WRITE "${DESTINATION}/ne_110m_admin_0_countries.prj" "${_wgs84_prj}")
+file(WRITE "${DESTINATION}/ne_50m_antarctic_ice_shelves_polys.prj" "${_wgs84_prj}")
 file(WRITE "${DESTINATION}/ne_110m_land.VERSION.txt" "4.1.0\n")
+file(WRITE "${DESTINATION}/ne_50m_antarctic_ice_shelves_polys.VERSION.txt" "4.1.0\n")
 file(WRITE "${DESTINATION}/ne_110m_admin_0_countries.cpg" "UTF-8")
 file(WRITE "${DESTINATION}/ne_110m_admin_0_countries.VERSION.txt" "5.1.1\n")
 
 aeris_verify_local("ne_110m_land.prj" "3259f0e55290a82b1350646f604e8a7ee1e2136c0320a40fad838ab40819fff8")
 aeris_verify_local("ne_110m_admin_0_countries.prj" "3259f0e55290a82b1350646f604e8a7ee1e2136c0320a40fad838ab40819fff8")
+aeris_verify_local("ne_50m_antarctic_ice_shelves_polys.prj" "3259f0e55290a82b1350646f604e8a7ee1e2136c0320a40fad838ab40819fff8")
 aeris_verify_local("ne_110m_land.VERSION.txt" "3b10b6ad566eadbcacadb33c591f1ec629593d6adf47442e56e0f61996829ef7")
+aeris_verify_local("ne_50m_antarctic_ice_shelves_polys.VERSION.txt" "3b10b6ad566eadbcacadb33c591f1ec629593d6adf47442e56e0f61996829ef7")
 aeris_verify_local("ne_110m_admin_0_countries.cpg" "3ad3031f5503a4404af825262ee8232cc04d4ea6683d42c5dd0a2f2a27ac9824")
 aeris_verify_local("ne_110m_admin_0_countries.VERSION.txt" "f9893302cd3158f3b5aea394dcd2a91574869e9e6ff69e9235b10a3bf8c983fb")
 
-message(STATUS "Pinned AERIS physical + political demo world is ready at ${DESTINATION}")
-message(STATUS "Every resource is bound to exact upstream bytes and verified by SHA-256; aggregate source identities are verified again by the viewer.")
+message(STATUS "Pinned AERIS physical + political + semantic surface demo world is ready at ${DESTINATION}")
+message(STATUS "Every resource is bound to exact upstream bytes and verified by SHA-256; aggregate source identities are verified again by project importers.")
