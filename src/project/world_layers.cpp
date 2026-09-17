@@ -7,10 +7,12 @@
 #include "aeris/storage/feature_property.hpp"
 #include "aeris/storage/geometry.hpp"
 #include "aeris/storage/provenance.hpp"
+#include "aeris/surface/classification.hpp"
 
 #include <algorithm>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
 namespace aeris::project {
@@ -88,6 +90,107 @@ namespace {
     for (const auto& feature : features) output.push_back(feature.stable_id);
     std::sort(output.begin(), output.end());
     return output;
+}
+
+[[nodiscard]] bool exact_surface_layer_wiring(
+    const storage::ProjectLayerRecord& existing,
+    const std::string& source_id
+) noexcept {
+    if (existing.role_id != storage::kLayerRolePhysicalSurfaceClassificationV1 ||
+        !existing.resources.empty() || existing.sources.size() != 2U) {
+        return false;
+    }
+    bool classification = false;
+    bool geometry = false;
+    for (const storage::LayerSourceBinding& binding : existing.sources) {
+        if (binding.source_id != source_id) return false;
+        if (binding.slot_id == "classification") {
+            if (classification) return false;
+            classification = true;
+        } else if (binding.slot_id == "geometry") {
+            if (geometry) return false;
+            geometry = true;
+        } else {
+            return false;
+        }
+    }
+    return classification && geometry;
+}
+
+[[nodiscard]] WorldLayerStackResult validate_surface_source(
+    const storage::ProjectStore& project,
+    const storage::SourceSnapshotRecord& source_record,
+    const std::string& source_id
+) {
+    if (!source::has_capability(
+            source_record.capability_bits,
+            source::Capability::surface_classification
+        )) {
+        return contract_mismatch(
+            "surface source does not advertise the surface_classification capability");
+    }
+
+    const auto geometry = storage::list_source_geometry_index(project, source_id);
+    if (!geometry.ok()) {
+        if (geometry.status.error == storage::StorageError::record_not_found) {
+            return contract_mismatch("surface source has no durable feature geometry");
+        }
+        return storage_failure(
+            geometry.status,
+            "could not inspect surface-classification geometry index"
+        );
+    }
+    const auto properties = storage::list_source_feature_properties_index(project, source_id);
+    if (!properties.ok()) {
+        if (properties.status.error == storage::StorageError::record_not_found) {
+            return contract_mismatch(
+                "surface source does not contain a complete durable property channel");
+        }
+        return storage_failure(
+            properties.status,
+            "could not inspect surface-classification property index"
+        );
+    }
+    if (geometry.features.empty() ||
+        geometry.features.size() != properties.features.size() ||
+        stable_ids(geometry.features) != stable_ids(properties.features)) {
+        return contract_mismatch(
+            "surface source geometry/property indexes are empty or describe different features");
+    }
+
+    for (const storage::FeaturePropertiesIndexEntry& feature : properties.features) {
+        const auto loaded = storage::load_feature_properties(
+            project,
+            source_id,
+            feature.stable_id
+        );
+        if (!loaded.ok()) {
+            return storage_failure(
+                loaded.status,
+                "could not load surface-classification properties for " + feature.stable_id
+            );
+        }
+        bool found_class = false;
+        for (const storage::StoredFeatureProperty& property : loaded.properties) {
+            if (property.key != surface::kSurfaceClassPropertyKey) continue;
+            if (found_class) {
+                return contract_mismatch(
+                    "surface feature contains duplicate canonical class properties");
+            }
+            const auto* text = std::get_if<std::string>(&property.value);
+            if (text == nullptr || !surface::parse_surface_class_id(*text).has_value()) {
+                return contract_mismatch(
+                    "surface feature contains an invalid canonical class identifier");
+            }
+            found_class = true;
+        }
+        if (!found_class) {
+            return contract_mismatch(
+                "surface feature is missing the canonical aeris.surface_class.v1 property");
+        }
+    }
+
+    return {};
 }
 
 }  // namespace
@@ -235,6 +338,93 @@ WorldLayerStackResult initialize_builtin_world_layer_stack(
         storage::StorageError::none,
         initialized.changed,
         initialized.durably_committed,
+        {},
+    };
+}
+
+WorldLayerStackResult ensure_builtin_surface_classification_layer(
+    storage::ProjectStore& project,
+    const std::string_view surface_source_id,
+    const std::string_view modified_utc
+) {
+    if (surface_source_id.empty() ||
+        surface_source_id.find('\0') != std::string_view::npos ||
+        modified_utc.empty()) {
+        return {
+            WorldLayerStackError::invalid_request,
+            storage::StorageError::none,
+            false,
+            false,
+            "surface-classification layer requires a canonical source ID and timestamp",
+        };
+    }
+
+    const std::string source_id(surface_source_id);
+    const auto snapshots = storage::list_source_snapshots(project);
+    if (!snapshots.ok()) {
+        return storage_failure(
+            snapshots.status,
+            "could not inspect project source provenance for surface classification"
+        );
+    }
+    const storage::SourceSnapshotRecord* source_record =
+        find_source(snapshots.records, source_id);
+    if (source_record == nullptr) {
+        return contract_mismatch(
+            "surface-classification source ID is not present in project provenance");
+    }
+
+    const WorldLayerStackResult validated =
+        validate_surface_source(project, *source_record, source_id);
+    if (!validated.ok()) return validated;
+
+    const auto layers = storage::list_project_layers(project);
+    if (!layers.ok()) {
+        return storage_failure(
+            layers.status,
+            "could not inspect project layers before surface-classification composition"
+        );
+    }
+    const auto existing = std::find_if(
+        layers.records.begin(),
+        layers.records.end(),
+        [](const storage::ProjectLayerRecord& item) {
+            return item.layer_id == kBuiltinSurfaceClassificationLayerId;
+        }
+    );
+    if (existing != layers.records.end()) {
+        if (!exact_surface_layer_wiring(*existing, source_id)) {
+            return contract_mismatch(
+                "existing built-in surface-classification layer has conflicting immutable wiring");
+        }
+        // Name and visibility are mutable user state. A bootstrap/update must
+        // never rewrite those values just to make an exact structural retry.
+        return {};
+    }
+
+    storage::LayerCreateRequest request = layer(
+        kBuiltinSurfaceClassificationLayerId,
+        storage::kLayerRolePhysicalSurfaceClassificationV1,
+        "Surface classification");
+    request.sources.push_back({"classification", source_id});
+    request.sources.push_back({"geometry", source_id});
+
+    const storage::LayerMutationResult appended =
+        storage::append_layer(project, request, modified_utc);
+    if (!appended.ok()) {
+        return {
+            WorldLayerStackError::storage_rejected,
+            appended.status.error,
+            appended.changed,
+            appended.durably_committed,
+            appended.status.diagnostic,
+        };
+    }
+    return {
+        WorldLayerStackError::none,
+        storage::StorageError::none,
+        appended.changed,
+        appended.durably_committed,
         {},
     };
 }
