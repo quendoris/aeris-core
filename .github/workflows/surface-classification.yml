@@ -10,6 +10,10 @@ on:
       - include/aeris/source/**
       - include/aeris/surface/**
       - src/source/**
+      - include/aeris/project/**
+      - src/project/**
+      - include/aeris/storage/**
+      - src/storage/**
       - include/aeris/geometry/**
       - src/geometry/**
       - tools/surface_*.cpp
@@ -24,6 +28,10 @@ on:
       - include/aeris/source/**
       - include/aeris/surface/**
       - src/source/**
+      - include/aeris/project/**
+      - src/project/**
+      - include/aeris/storage/**
+      - src/storage/**
       - include/aeris/geometry/**
       - src/geometry/**
       - tools/surface_*.cpp
@@ -44,6 +52,13 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install durable-project dependency
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libsqlite3-dev
 
       - name: Fetch exact pinned source bytes
         shell: bash
@@ -76,21 +91,40 @@ jobs:
             "3b10b6ad566eadbcacadb33c591f1ec629593d6adf47442e56e0f61996829ef7"
           test "$(cat "$root/ne_50m_antarctic_ice_shelves_polys.VERSION.txt")" = "4.1.0"
 
-      - name: Configure semantic source proof
+      - name: Configure semantic and durable project proof
         shell: bash
         run: >-
           cmake -S . -B build-surface
           -DAERIS_BUILD_TESTS=ON
           -DAERIS_BUILD_TOOLS=ON
+          -DAERIS_BUILD_STORAGE=ON
+          -DAERIS_BUILD_PROJECT=ON
           -DAERIS_WARNINGS_AS_ERRORS=ON
           -DCMAKE_BUILD_TYPE=Release
 
-      - name: Build semantic adapter and real-source proofs
+      - name: Build semantic adapter and project libraries
         shell: bash
         run: >-
           cmake --build build-surface
-          --target aeris_test_natural_earth aeris_surface_ice_shelf_probe aeris_shapefile_projection_probe
+          --target aeris_test_natural_earth aeris_surface_ice_shelf_probe aeris_shapefile_projection_probe aeris_project
           --parallel 2
+
+      - name: Compile durable semantic-channel probe
+        shell: bash
+        run: |
+          set -euo pipefail
+          c++ -std=c++17 \
+            -Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion -Werror \
+            -Iinclude \
+            tools/surface_classification_project_probe.cpp \
+            -Wl,--start-group \
+              build-surface/libaeris_project.a \
+              build-surface/libaeris_storage.a \
+              build-surface/libaeris_core.a \
+              build-surface/libaeris_hash.a \
+            -Wl,--end-group \
+            -lsqlite3 -pthread \
+            -o build-surface/aeris_surface_classification_project_probe
 
       - name: Prove canonical classification vocabulary and adapter contract
         shell: bash
@@ -116,3 +150,24 @@ jobs:
             "$root/ne_50m_antarctic_ice_shelves_polys.shp" \
             1 \
             0
+
+      - name: Import semantic source into durable .aeris
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/natural-earth-ice-shelves"
+          project="$RUNNER_TEMP/surface-classification.aeris"
+          retrieved_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          ./build-surface/aeris_surface_classification_project_probe \
+            import "$root" "$project" "$retrieved_at"
+
+      - name: Remove acquisition source completely
+        shell: bash
+        run: rm -rf "$RUNNER_TEMP/natural-earth-ice-shelves"
+
+      - name: Prove classification rehydrates from .aeris only
+        shell: bash
+        run: >-
+          ./build-surface/aeris_surface_classification_project_probe
+          verify
+          ${{ runner.temp }}/surface-classification.aeris
