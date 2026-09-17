@@ -189,6 +189,11 @@ if(TARGET aeris_project)
         project_world_layers
     )
     aeris_add_project_test(
+        aeris_test_project_surface_layer
+        test_project_surface_layer.cpp
+        project_surface_layer
+    )
+    aeris_add_project_test(
         aeris_test_project_source_reader
         test_project_source_reader.cpp
         project_source_reader
