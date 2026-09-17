@@ -23,6 +23,7 @@ enum class Capability : std::uint32_t {
     physical_relief = 1U << 4U,
     hydrography = 1U << 5U,
     imagery = 1U << 6U,
+    surface_classification = 1U << 7U,
 };
 
 using CapabilityMask = std::uint32_t;

@@ -1,0 +1,118 @@
+# SPDX-FileCopyrightText: 2026 quendoris
+# SPDX-License-Identifier: AGPL-3.0-only
+
+name: Surface Classification
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/surface-classification.yml
+      - include/aeris/source/**
+      - include/aeris/surface/**
+      - src/source/**
+      - include/aeris/geometry/**
+      - src/geometry/**
+      - tools/surface_*.cpp
+      - tools/shapefile_projection_probe.cpp
+      - tests/test_natural_earth.cpp
+      - tests/test_surface_*.cpp
+      - CMakeLists.txt
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/surface-classification.yml
+      - include/aeris/source/**
+      - include/aeris/surface/**
+      - src/source/**
+      - include/aeris/geometry/**
+      - src/geometry/**
+      - tools/surface_*.cpp
+      - tools/shapefile_projection_probe.cpp
+      - tests/test_natural_earth.cpp
+      - tests/test_surface_*.cpp
+      - CMakeLists.txt
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  natural-earth-antarctic-ice-shelves:
+    name: Natural Earth pinned Antarctic ice shelves
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Fetch exact pinned source bytes
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/natural-earth-ice-shelves"
+          mkdir -p "$root"
+          base="https://raw.githubusercontent.com/nvkelso/natural-earth-vector/f1890d9f152c896d250a77557a5751a93d494776/50m_physical"
+          for file in \
+            ne_50m_antarctic_ice_shelves_polys.shp \
+            ne_50m_antarctic_ice_shelves_polys.prj \
+            ne_50m_antarctic_ice_shelves_polys.VERSION.txt; do
+            curl --proto '=https' --tlsv1.2 --fail --location --retry 3 \
+              --output "$root/$file" "$base/$file"
+          done
+
+      - name: Verify exact source identities
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/natural-earth-ice-shelves"
+          test "$(wc -c < "$root/ne_50m_antarctic_ice_shelves_polys.shp")" -eq 83960
+          test "$(wc -c < "$root/ne_50m_antarctic_ice_shelves_polys.prj")" -eq 147
+          test "$(wc -c < "$root/ne_50m_antarctic_ice_shelves_polys.VERSION.txt")" -eq 6
+          test "$(sha256sum "$root/ne_50m_antarctic_ice_shelves_polys.shp" | cut -d' ' -f1)" = \
+            "05d06b075deb3e4119f0510788b03af7100f2c25b060d5cfdd126fb6817004db"
+          test "$(sha256sum "$root/ne_50m_antarctic_ice_shelves_polys.prj" | cut -d' ' -f1)" = \
+            "3259f0e55290a82b1350646f604e8a7ee1e2136c0320a40fad838ab40819fff8"
+          test "$(sha256sum "$root/ne_50m_antarctic_ice_shelves_polys.VERSION.txt" | cut -d' ' -f1)" = \
+            "3b10b6ad566eadbcacadb33c591f1ec629593d6adf47442e56e0f61996829ef7"
+          test "$(cat "$root/ne_50m_antarctic_ice_shelves_polys.VERSION.txt")" = "4.1.0"
+
+      - name: Configure semantic source proof
+        shell: bash
+        run: >-
+          cmake -S . -B build-surface
+          -DAERIS_BUILD_TESTS=ON
+          -DAERIS_BUILD_TOOLS=ON
+          -DAERIS_WARNINGS_AS_ERRORS=ON
+          -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build semantic adapter and real-source proofs
+        shell: bash
+        run: >-
+          cmake --build build-surface
+          --target aeris_test_natural_earth aeris_surface_ice_shelf_probe aeris_shapefile_projection_probe
+          --parallel 2
+
+      - name: Prove canonical classification vocabulary and adapter contract
+        shell: bash
+        run: >-
+          ctest --test-dir build-surface
+          --output-on-failure
+          -R '^natural_earth_adapter$'
+
+      - name: Prove exact pinned source through semantic adapter
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/natural-earth-ice-shelves"
+          retrieved_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          ./build-surface/aeris_surface_ice_shelf_probe "$root" "$retrieved_at"
+
+      - name: Prove pinned ice-shelf geometry canonicalizes and projects
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/natural-earth-ice-shelves"
+          ./build-surface/aeris_shapefile_projection_probe \
+            "$root/ne_50m_antarctic_ice_shelves_polys.shp" \
+            1 \
+            0

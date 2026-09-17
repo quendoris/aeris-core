@@ -62,6 +62,7 @@ add_library(aeris_core STATIC
     src/source/adapter.cpp
     src/source/dbf.cpp
     src/source/natural_earth.cpp
+    src/source/natural_earth_surface.cpp
     src/source/natural_earth_cartography.cpp
     src/source/registry.cpp
     src/source/shapefile.cpp
@@ -170,6 +171,12 @@ if(AERIS_BUILD_TOOLS)
     target_compile_features(aeris_shapefile_projection_probe PRIVATE cxx_std_17)
     set_target_properties(aeris_shapefile_projection_probe PROPERTIES CXX_EXTENSIONS OFF)
     aeris_enable_warnings(aeris_shapefile_projection_probe)
+
+    add_executable(aeris_surface_ice_shelf_probe tools/surface_ice_shelf_probe.cpp)
+    target_link_libraries(aeris_surface_ice_shelf_probe PRIVATE AERIS::core)
+    target_compile_features(aeris_surface_ice_shelf_probe PRIVATE cxx_std_17)
+    set_target_properties(aeris_surface_ice_shelf_probe PROPERTIES CXX_EXTENSIONS OFF)
+    aeris_enable_warnings(aeris_surface_ice_shelf_probe)
 
     add_executable(aeris_natural_earth_admin0_probe tools/natural_earth_admin0_probe.cpp)
     target_link_libraries(aeris_natural_earth_admin0_probe PRIVATE AERIS::core)
