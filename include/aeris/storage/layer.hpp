@@ -21,6 +21,8 @@ inline constexpr std::size_t kMaxLayerBindings = 256U;
 // always denotes one meaning within a given draft generation.
 inline constexpr std::string_view kLayerRolePhysicalElevationV1 =
     "aeris.layer.physical.elevation.v1";
+inline constexpr std::string_view kLayerRolePhysicalSurfaceClassificationV1 =
+    "aeris.layer.physical.surface-classification.v1";
 inline constexpr std::string_view kLayerRolePhysicalLandFillV1 =
     "aeris.layer.physical.land-fill.v1";
 inline constexpr std::string_view kLayerRolePhysicalCoastlineV1 =
