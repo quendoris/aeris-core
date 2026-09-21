@@ -65,6 +65,15 @@ struct LayerCreateRequest final {
     std::vector<LayerResourceBinding> resources;
 };
 
+// Monotonic extension of an existing logical layer. This is the storage
+// primitive used by progressively materialized datasets: already-bound slots
+// are immutable, while new verified source/resource chunks may be attached in
+// one acknowledged transaction. Exact retries are idempotent.
+struct LayerBindingAppendRequest final {
+    std::vector<LayerSourceBinding> sources;
+    std::vector<LayerResourceBinding> resources;
+};
+
 struct LayerMutationResult final {
     Status status;
     bool changed{false};
@@ -108,6 +117,18 @@ struct LayerStateUpdate final {
 [[nodiscard]] LayerMutationResult append_layer(
     ProjectStore& project,
     const LayerCreateRequest& request,
+    std::string_view modified_utc);
+
+// Adds only missing bindings to an existing layer. A slot already bound to the
+// same target is treated as an exact retry; attempting to rebind an existing
+// slot to a different source/resource is rejected. New resource bindings
+// receive the same required-for-reproduction promotion and frozen-project
+// invalidation semantics as append_layer(). The complete mutation is atomic and
+// advances exactly one project revision when at least one binding is added.
+[[nodiscard]] LayerMutationResult append_layer_bindings(
+    ProjectStore& project,
+    std::string_view layer_id,
+    const LayerBindingAppendRequest& request,
     std::string_view modified_utc);
 
 [[nodiscard]] LayerMutationResult update_layer_state(
