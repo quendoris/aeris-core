@@ -100,7 +100,7 @@ The current render-neutral public scene boundary is owned by `aeris/view/*`. It 
 
 | Contract | Primary responsibility | Implementation surface | Representative verification |
 | --- | --- | --- | --- |
-| `SURFACE-CLASSIFICATION.md` | Separate numerical elevation from water/land/grounded-ice/floating-ice semantics | canonical semantic surface layer + frontend presentation caches | classification fixtures, projection consistency and real-data Antarctic regression (implementation pending) |
+| `SURFACE-CLASSIFICATION.md` | Separate numerical elevation from water/land/grounded-ice/floating-ice semantics | canonical semantic surface layer + frontend presentation caches | classification/source fixtures, durable reopen proof, Desktop Globe/planar pixel regressions and coordinate-level inspector acceptance |
 
 The draft surface-classification contract is intentionally independent of the numerical elevation codec. Elevation answers height/depth; semantic classification answers what physical/material class occupies the geographic point; presentation decides how to style the combination.
 
@@ -228,7 +228,9 @@ This belongs at the frontend/application boundary unless a rule becomes part of 
 
 ### 7.2 Surface/material classification
 
-`SURFACE-CLASSIFICATION.md` now defines the draft semantic boundary, but the implementation and executable acceptance are still pending. Until those land, current renderers must not be described as implementing the five-class model.
+`SURFACE-CLASSIFICATION.md` defines the draft semantic boundary and its first production slice is now implemented. Core owns canonical generation-1 class IDs, a verified Antarctic floating-ice-shelf source, durable property persistence/reopen, and idempotent semantic-layer composition. Desktop consumes that durable channel, keeps numerical elevation out of material classification, and exercises Globe/planar pixel plus coordinate-level probe acceptance.
+
+The five-class model is not yet complete as a globally resolved classifier: explicit canonical `water`, `land`, and `grounded_ice` coverage and deterministic reconciliation across future overlapping semantic providers still need implementation and acceptance. Documentation must therefore distinguish the implemented first slice from full generation-1 classification coverage.
 
 ### 7.3 Presentation-resource loading
 
