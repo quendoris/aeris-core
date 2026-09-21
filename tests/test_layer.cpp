@@ -324,10 +324,128 @@ void test_layer_graph_and_portability() {
                  hostile, StorageError::schema_invalid);
 }
 
+void test_monotonic_layer_binding_growth() {
+    using namespace aeris::storage;
+
+    Fixture fixture{};
+    ProjectStore* project = fixture.project();
+    expect_true("binding-growth project creates", project != nullptr);
+    if (project == nullptr) return;
+
+    SourceSnapshotRecord primary = source_record();
+    const auto primary_write = store_source_snapshot(
+        *project, primary, "2026-08-17T10:00:01Z");
+    expect_true("binding-growth primary source stores", primary_write.ok());
+
+    SourceSnapshotRecord detail = source_record();
+    detail.source_id = "world.political.detail";
+    detail.dataset = "political-world-detail";
+    detail.content_sha256 = std::string(64U, 'b');
+    const auto detail_write = store_source_snapshot(
+        *project, detail, "2026-08-17T10:00:02Z");
+    expect_true("binding-growth detail source stores", detail_write.ok());
+
+    ProjectResourceIdentity overview_asset = optional_asset(fixture.asset_path());
+    const auto overview_write = store_external_resource(
+        *project, overview_asset, "2026-08-17T10:00:03Z");
+    expect_true("binding-growth overview resource stores", overview_write.ok());
+
+    ProjectResourceIdentity detail_asset = optional_asset(fixture.asset_path());
+    detail_asset.resource_id = "flags.atlas.detail";
+    detail_asset.retrieval_uri = "https://example.invalid/aeris/flags-atlas-detail";
+    const auto detail_asset_write = store_external_resource(
+        *project, detail_asset, "2026-08-17T10:00:04Z");
+    expect_true("binding-growth detail resource stores", detail_asset_write.ok());
+
+    LayerCreateRequest layer{};
+    layer.layer_id = "layer.progressive";
+    layer.role_id = "aeris.layer.progressive.fixture.v1";
+    layer.name = "Progressive fixture";
+    layer.sources.push_back({"overview", primary.source_id});
+    layer.resources.push_back({"overview", overview_asset.resource_id});
+    const auto layer_write = append_layer(
+        *project, layer, "2026-08-17T10:00:05Z");
+    expect_true("binding-growth layer creates", layer_write.ok() && layer_write.changed);
+    const std::uint64_t before_growth = project->metadata().revision;
+
+    LayerBindingAppendRequest growth{};
+    growth.sources.push_back({"detail.0", detail.source_id});
+    growth.resources.push_back({"detail.0", detail_asset.resource_id});
+    const auto grown = append_layer_bindings(
+        *project, layer.layer_id, growth, "2026-08-17T10:00:06Z");
+    expect_true("new bindings append atomically",
+                grown.ok() && grown.changed && grown.durably_committed);
+    expect_true("binding append advances exactly one revision",
+                project->metadata().revision == before_growth + 1U);
+
+    const auto listed = list_project_layers(*project);
+    expect_true("grown layer lists", listed.ok() && listed.records.size() == 1U);
+    if (listed.ok() && listed.records.size() == 1U) {
+        const auto& stored = listed.records.front();
+        expect_true("grown layer preserves and adds source slots",
+                    stored.sources.size() == 2U &&
+                    stored.sources[0].slot_id == "detail.0" &&
+                    stored.sources[0].source_id == detail.source_id &&
+                    stored.sources[1].slot_id == "overview" &&
+                    stored.sources[1].source_id == primary.source_id);
+        expect_true("grown layer preserves and adds resource slots",
+                    stored.resources.size() == 2U &&
+                    stored.resources[0].slot_id == "detail.0" &&
+                    stored.resources[0].resource_id == detail_asset.resource_id &&
+                    stored.resources[1].slot_id == "overview" &&
+                    stored.resources[1].resource_id == overview_asset.resource_id);
+    }
+
+    const auto resources = list_project_resources(*project);
+    expect_true("newly bound optional resource is promoted",
+                resources.ok() && resources.records.size() == 2U);
+    if (resources.ok()) {
+        for (const auto& resource : resources.records) {
+            expect_true("all bound resources are required",
+                        resource.identity.required_for_reproduction);
+        }
+    }
+
+    const std::uint64_t after_growth = project->metadata().revision;
+    const auto retry = append_layer_bindings(
+        *project, layer.layer_id, growth, "2026-08-17T10:00:07Z");
+    expect_true("exact binding append retry is idempotent",
+                retry.ok() && !retry.changed && !retry.durably_committed);
+    expect_true("binding retry keeps revision",
+                project->metadata().revision == after_growth);
+
+    LayerBindingAppendRequest conflict{};
+    conflict.sources.push_back({"detail.0", primary.source_id});
+    const auto conflict_result = append_layer_bindings(
+        *project, layer.layer_id, conflict, "2026-08-17T10:00:08Z");
+    expect_error("existing source slot cannot be rebound",
+                 conflict_result.status, StorageError::record_exists);
+    expect_true("source conflict keeps revision",
+                project->metadata().revision == after_growth);
+
+    LayerBindingAppendRequest missing{};
+    missing.sources.push_back({"detail.missing", "source.does.not.exist"});
+    const auto missing_result = append_layer_bindings(
+        *project, layer.layer_id, missing, "2026-08-17T10:00:09Z");
+    expect_error("missing appended source rolls transaction back",
+                 missing_result.status, StorageError::record_not_found);
+    expect_true("missing source keeps revision",
+                project->metadata().revision == after_growth);
+
+    const auto final_layers = list_project_layers(*project);
+    expect_true("failed append leaves grown layer unchanged",
+                final_layers.ok() && final_layers.records.size() == 1U &&
+                final_layers.records.front().sources.size() == 2U &&
+                final_layers.records.front().resources.size() == 2U);
+    expect_true("grown layer graph passes deep integrity",
+                project->verify_integrity().ok());
+}
+
 }  // namespace
 
 int main() {
     test_layer_graph_and_portability();
+    test_monotonic_layer_binding_growth();
 
     if (failures != 0) {
         std::cerr << failures << " layer assertion(s) failed\n";
