@@ -35,21 +35,18 @@ constexpr std::size_t kMaxLayerNameBytes = 1024U;
     return Status::success();
 }
 
-[[nodiscard]] Status validate_request(LayerCreateRequest& request) {
-    if (!bounded_text(request.layer_id, kMaxIdentifierBytes) ||
-        !bounded_text(request.role_id, kMaxIdentifierBytes) ||
-        !bounded_text(request.name, kMaxLayerNameBytes)) {
-        return {StorageError::invalid_argument,
-                "layer ID/role/name violates canonical storage bounds"};
-    }
-    if (request.sources.size() > kMaxLayerBindings ||
-        request.resources.size() > kMaxLayerBindings) {
+[[nodiscard]] Status validate_binding_sets(
+    std::vector<LayerSourceBinding>& sources,
+    std::vector<LayerResourceBinding>& resources
+) {
+    if (sources.size() > kMaxLayerBindings ||
+        resources.size() > kMaxLayerBindings) {
         return {StorageError::invalid_argument,
                 "layer exceeds the 256-binding draft bound"};
     }
 
     std::set<std::string> source_slots;
-    for (const LayerSourceBinding& binding : request.sources) {
+    for (const LayerSourceBinding& binding : sources) {
         Status status = validate_slot_id(binding.slot_id);
         if (!status) return status;
         if (!bounded_text(binding.source_id, kMaxIdentifierBytes)) {
@@ -63,7 +60,7 @@ constexpr std::size_t kMaxLayerNameBytes = 1024U;
     }
 
     std::set<std::string> resource_slots;
-    for (const LayerResourceBinding& binding : request.resources) {
+    for (const LayerResourceBinding& binding : resources) {
         Status status = validate_slot_id(binding.slot_id);
         if (!status) return status;
         if (!bounded_text(binding.resource_id, kMaxIdentifierBytes)) {
@@ -76,15 +73,25 @@ constexpr std::size_t kMaxLayerNameBytes = 1024U;
         }
     }
 
-    std::sort(request.sources.begin(), request.sources.end(),
+    std::sort(sources.begin(), sources.end(),
               [](const LayerSourceBinding& a, const LayerSourceBinding& b) {
                   return a.slot_id < b.slot_id;
               });
-    std::sort(request.resources.begin(), request.resources.end(),
+    std::sort(resources.begin(), resources.end(),
               [](const LayerResourceBinding& a, const LayerResourceBinding& b) {
                   return a.slot_id < b.slot_id;
               });
     return Status::success();
+}
+
+[[nodiscard]] Status validate_request(LayerCreateRequest& request) {
+    if (!bounded_text(request.layer_id, kMaxIdentifierBytes) ||
+        !bounded_text(request.role_id, kMaxIdentifierBytes) ||
+        !bounded_text(request.name, kMaxLayerNameBytes)) {
+        return {StorageError::invalid_argument,
+                "layer ID/role/name violates canonical storage bounds"};
+    }
+    return validate_binding_sets(request.sources, request.resources);
 }
 
 [[nodiscard]] Status validate_project_connection(sqlite3* db, const ProjectStore& project) {
@@ -563,6 +570,174 @@ LayerMutationResult append_layer(
         detail::rollback(db.get());
         return {std::move(status), false, false};
     }
+    status = detail::commit(db.get());
+    if (!status) {
+        detail::rollback(db.get());
+        return {std::move(status), false, false};
+    }
+
+    status = project.refresh_metadata();
+    if (!status) return {std::move(status), true, true};
+    return {Status::success(), true, true};
+}
+
+LayerMutationResult append_layer_bindings(
+    ProjectStore& project,
+    const std::string_view layer_id,
+    const LayerBindingAppendRequest& input,
+    const std::string_view modified_utc
+) {
+    if (!bounded_text(std::string(layer_id), kMaxIdentifierBytes) ||
+        !is_canonical_utc_timestamp(modified_utc) ||
+        (input.sources.empty() && input.resources.empty())) {
+        return {{StorageError::invalid_argument,
+                 "layer binding append requires canonical layer ID/time and at least one binding"},
+                false, false};
+    }
+
+    LayerBindingAppendRequest request = input;
+    Status status = validate_binding_sets(request.sources, request.resources);
+    if (!status) return {std::move(status), false, false};
+
+    detail::DbPtr db;
+    status = prepare_layer_db(project, db);
+    if (!status) return {std::move(status), false, false};
+    if (!(status = detail::begin_immediate(db.get()))) {
+        return {std::move(status), false, false};
+    }
+
+    std::vector<ProjectLayerRecord> layers;
+    status = load_layers(db.get(), layers);
+    if (!status) {
+        detail::rollback(db.get());
+        return {std::move(status), false, false};
+    }
+    const auto found = std::find_if(
+        layers.begin(), layers.end(),
+        [&](const ProjectLayerRecord& layer) {
+            return layer.layer_id == layer_id;
+        });
+    if (found == layers.end()) {
+        detail::rollback(db.get());
+        return {{StorageError::record_not_found, "layer ID was not found"}, false, false};
+    }
+
+    std::vector<LayerSourceBinding> new_sources;
+    new_sources.reserve(request.sources.size());
+    for (const LayerSourceBinding& requested : request.sources) {
+        const auto existing = std::find_if(
+            found->sources.begin(), found->sources.end(),
+            [&](const LayerSourceBinding& binding) {
+                return binding.slot_id == requested.slot_id;
+            });
+        if (existing != found->sources.end()) {
+            if (existing->source_id != requested.source_id) {
+                detail::rollback(db.get());
+                return {{StorageError::record_exists,
+                         "layer source slot is already bound to a different source"},
+                        false, false};
+            }
+            continue;
+        }
+        new_sources.push_back(requested);
+    }
+
+    std::vector<LayerResourceBinding> new_resources;
+    new_resources.reserve(request.resources.size());
+    for (const LayerResourceBinding& requested : request.resources) {
+        const auto existing = std::find_if(
+            found->resources.begin(), found->resources.end(),
+            [&](const LayerResourceBinding& binding) {
+                return binding.slot_id == requested.slot_id;
+            });
+        if (existing != found->resources.end()) {
+            if (existing->resource_id != requested.resource_id) {
+                detail::rollback(db.get());
+                return {{StorageError::record_exists,
+                         "layer resource slot is already bound to a different resource"},
+                        false, false};
+            }
+            continue;
+        }
+        new_resources.push_back(requested);
+    }
+
+    if (found->sources.size() + new_sources.size() > kMaxLayerBindings ||
+        found->resources.size() + new_resources.size() > kMaxLayerBindings) {
+        detail::rollback(db.get());
+        return {{StorageError::invalid_argument,
+                 "layer binding append would exceed the 256-binding draft bound"},
+                false, false};
+    }
+
+    if (new_sources.empty() && new_resources.empty()) {
+        detail::rollback(db.get());
+        status = project.refresh_metadata();
+        if (!status) return {std::move(status), false, false};
+        return {Status::success(), false, false};
+    }
+
+    bool external_required = false;
+    for (const LayerSourceBinding& binding : new_sources) {
+        bool exists = false;
+        status = row_exists(
+            db.get(),
+            "SELECT 1 FROM aeris_source WHERE source_id=?;",
+            binding.source_id,
+            exists
+        );
+        if (!status) break;
+        if (!exists) {
+            status = {
+                StorageError::record_not_found,
+                "layer source binding references missing project source: " + binding.source_id
+            };
+            break;
+        }
+
+        detail::StmtPtr stmt;
+        status = detail::prepare(
+            db.get(),
+            "INSERT INTO aeris_layer_source(layer_id,slot_id,source_id) VALUES(?,?,?);",
+            stmt
+        );
+        if (status) status = detail::bind_text(db.get(), stmt.get(), 1, std::string(layer_id));
+        if (status) status = detail::bind_text(db.get(), stmt.get(), 2, binding.slot_id);
+        if (status) status = detail::bind_text(db.get(), stmt.get(), 3, binding.source_id);
+        if (status) status = detail::step_done(db.get(), stmt.get());
+        if (!status) break;
+    }
+
+    for (const LayerResourceBinding& binding : new_resources) {
+        if (!status) break;
+        status = promote_resource_requirement(db.get(), binding.resource_id, external_required);
+        if (!status) break;
+
+        detail::StmtPtr stmt;
+        status = detail::prepare(
+            db.get(),
+            "INSERT INTO aeris_layer_resource(layer_id,slot_id,resource_id) VALUES(?,?,?);",
+            stmt
+        );
+        if (status) status = detail::bind_text(db.get(), stmt.get(), 1, std::string(layer_id));
+        if (status) status = detail::bind_text(db.get(), stmt.get(), 2, binding.slot_id);
+        if (status) status = detail::bind_text(db.get(), stmt.get(), 3, binding.resource_id);
+        if (status) status = detail::step_done(db.get(), stmt.get());
+    }
+
+    if (status) {
+        status = advance_revision(
+            db.get(),
+            project,
+            modified_utc,
+            external_required ? std::optional<bool>(false) : std::nullopt
+        );
+    }
+    if (!status) {
+        detail::rollback(db.get());
+        return {std::move(status), false, false};
+    }
+
     status = detail::commit(db.get());
     if (!status) {
         detail::rollback(db.get());
