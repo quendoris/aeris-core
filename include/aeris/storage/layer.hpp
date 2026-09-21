@@ -13,7 +13,7 @@
 namespace aeris::storage {
 
 inline constexpr std::size_t kMaxProjectLayers = 65535U;
-inline constexpr std::size_t kMaxLayerBindings = 256U;
+inline constexpr std::size_t kMaxLayerBindings = 1024U;
 
 // Built-in presentation roles are semantic IDs, not renderer class names. They
 // are suitable for ProjectLayerRecord::role_id and remain independent of Qt or
