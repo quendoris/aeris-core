@@ -327,6 +327,11 @@ void test_layer_graph_and_portability() {
 void test_monotonic_layer_binding_growth() {
     using namespace aeris::storage;
 
+    expect_true(
+        "progressive global 15-degree terrain grid fits one logical layer",
+        kMaxLayerBindings >= 289U
+    );
+
     Fixture fixture{};
     ProjectStore* project = fixture.project();
     expect_true("binding-growth project creates", project != nullptr);

@@ -42,7 +42,7 @@ constexpr std::size_t kMaxLayerNameBytes = 1024U;
     if (sources.size() > kMaxLayerBindings ||
         resources.size() > kMaxLayerBindings) {
         return {StorageError::invalid_argument,
-                "layer exceeds the 256-binding draft bound"};
+                "layer exceeds the 1024-binding draft bound"};
     }
 
     std::set<std::string> source_slots;
@@ -666,7 +666,7 @@ LayerMutationResult append_layer_bindings(
         found->resources.size() + new_resources.size() > kMaxLayerBindings) {
         detail::rollback(db.get());
         return {{StorageError::invalid_argument,
-                 "layer binding append would exceed the 256-binding draft bound"},
+                 "layer binding append would exceed the 1024-binding draft bound"},
                 false, false};
     }
 
