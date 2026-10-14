@@ -211,7 +211,9 @@ void finalize_flat_bounds(SceneGeometry& scene) {
 
         SceneFeatureGeometry output{};
         output.stable_id = feature.stable_id;
-        for (const auto& source_ring : feature.rings) {
+        for (std::size_t ring_index = 0U;
+             ring_index < feature.rings.size(); ++ring_index) {
+            const auto& source_ring = feature.rings[ring_index];
             if (should_cancel(canceled)) {
                 scene.canceled = true;
                 return scene;
@@ -226,8 +228,19 @@ void finalize_flat_bounds(SceneGeometry& scene) {
             if (!verified.ok()) {
                 scene.ok = false;
                 scene.diagnostic = "verified globe fill failed for " + feature.stable_id +
+                    " ring=" + std::to_string(ring_index) +
                     " (verification error " +
-                    std::to_string(static_cast<unsigned>(verified.error)) + ")";
+                    std::to_string(static_cast<unsigned>(verified.error)) +
+                    ", finite error " +
+                    std::to_string(static_cast<unsigned>(verified.polygon.error)) +
+                    ", refinement rounds " + std::to_string(verified.refinement_rounds) +
+                    ", planar delta m2 " +
+                    std::to_string(verified.estimated_planar_area_error_m2) +
+                    ", allowed delta m2 " +
+                    std::to_string(verified.allowed_planar_area_delta_m2) +
+                    ", component delta m2 " +
+                    std::to_string(verified.estimated_max_component_area_error_m2) +
+                    ")";
                 return scene;
             }
 
